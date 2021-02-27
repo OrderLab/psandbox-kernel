@@ -358,6 +358,11 @@
 434	common	pidfd_open		__x64_sys_pidfd_open
 435	common	clone3			__x64_sys_clone3/ptregs
 
+# psandbox syscalls
+436	common	PSANDBOX_create		__x64_sys_psandbox_create
+437	common	PSANDBOX_release	__x64_sys_psandbox_release
+438 common  PSANDBOX_wakeup    __x64_sys_psandbox_wakeup
+
 #
 # x32-specific system call numbers start at 512 to avoid cache impact
 # for native 64-bit operation. The __x32_compat_sys stubs are created
