@@ -14,5 +14,15 @@
 #include <linux/semaphore.h>
 #include <linux/list.h>
 
+enum enum_psandbox_event
+{
+  START,AWAKE
+};
+
+typedef struct psandbox_info {
+  int bid;
+  struct task_struct* current_task;
+  enum enum_psandbox_event event;
+}PSandbox;
 
 #endif //LINUX_5_4_PSANDBOX_H

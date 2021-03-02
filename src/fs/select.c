@@ -256,6 +256,12 @@ static int poll_schedule_timeout(struct poll_wqueues *pwq, int state,
 	 */
 	smp_store_mb(pwq->triggered, 0);
 
+  	if(rc == -4 && current->psandbox) {
+		if(current->psandbox->event == AWAKE) {
+			rc = 0;
+			current->psandbox->event = START;
+		}
+  	}
 	return rc;
 }
 
@@ -505,7 +511,7 @@ static int do_select(int n, fd_set_bits *fds, struct timespec64 *end_time)
 	for (;;) {
 		unsigned long *rinp, *routp, *rexp, *inp, *outp, *exp;
 		bool can_busy_loop = false;
-
+      
 		inp = fds->in; outp = fds->out; exp = fds->ex;
 		rinp = fds->res_in; routp = fds->res_out; rexp = fds->res_ex;
 
@@ -947,9 +953,10 @@ static int do_poll(struct poll_list *list, struct poll_wqueues *wait,
 			expire = timespec64_to_ktime(*end_time);
 			to = &expire;
 		}
-
+		// Psandbox change
 		if (!poll_schedule_timeout(wait, TASK_INTERRUPTIBLE, to, slack))
 			timed_out = 1;
+
 	}
 	return count;
 }

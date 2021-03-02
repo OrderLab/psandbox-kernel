@@ -31,6 +31,7 @@
 #include <linux/task_io_accounting.h>
 #include <linux/posix-timers.h>
 #include <linux/rseq.h>
+#include <linux/psandbox/psandbox.h>
 
 /* task_struct member predeclarations (sorted alphabetically): */
 struct audit_context;
@@ -1272,6 +1273,10 @@ struct task_struct {
 	 */
 	randomized_struct_fields_end
 
+
+	/*Psandbox change*/
+
+	PSandbox* psandbox;
 	/* CPU-specific state of this task: */
 	struct thread_struct		thread;
 

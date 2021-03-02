@@ -9,7 +9,7 @@
 //      Licensed under the Apache License, Version 2.0 (the "License");
 
 
-#include <linux/psandbox.h>
+#include <linux/psandbox/psandbox.h>
 #include <linux/slab.h>
 #include <linux/syscalls.h>
 #include <linux/sched.h>
@@ -18,17 +18,7 @@
 
 #define MAX_TIME 100*5
 
-struct psandbox_info {
-  struct task_struct * current_task;
-  struct list_head	psandbox;	/* psandbox list */
-  int loop_count;
-  int flag;
-};
 
-enum enum_event_type
-{
-  EVENT_ENTERLOOP,EVENT_EXITLOOP,EVENT_BEGINTASK,EVENT_ENDTASK
-};
 
 
 struct psandbox_info  psandboxs[10];
@@ -36,9 +26,10 @@ int i = 0;
 
 /*This function will create a psandbox and bind to the current thread*/
 SYSCALL_DEFINE1(psandbox_create, char *, name) {
-  struct psandbox_info psandbox;
+  PSandbox psandbox;
   psandbox.current_task = current;
-  psandbox.loop_count = 0;
+  current->psandbox = &psandbox;
+  psandbox.event = START;
   if(i>10) {
     printk(KERN_INFO "kernel panic %d\n",current->pid);
   }
@@ -59,20 +50,21 @@ SYSCALL_DEFINE1(psandbox_release, int, psandbox_id) {
 }
 
 SYSCALL_DEFINE1(psandbox_wakeup, int, tid) {
+  int j;
   if (!tid) {
-  printk(KERN_INFO "psandbox syscall called psandbox_wakeup pid\n");
-  return;
+    printk(KERN_INFO "psandbox syscall called psandbox_wakeup pid\n");
+    return;
   }
   struct task_struct *task = find_get_task_by_vpid(tid);
-//  struct kernel_siginfo *info;
-//  info->si_signo = SIGCONT;
-//  info->si_errno = 0;
-//  info->si_code = SI_USER;
-//  info->si_pid = task_tgid_vnr(task);
-//  info->si_uid = 0;
-//
-//  do_send_sig_info(SIGCONT,info,task,PIDTYPE_TGID);
-int success = wake_up_state(task,TASK_INTERRUPTIBLE);
+  for(j = 0;j<i;j++){
+    printk(KERN_INFO "the id is %d, the sandbox pid is %d, the pid is %d\n",j,psandboxs[j].current_task, task);
+    if(psandboxs[j].current_task == task) {
+      printk(KERN_INFO "change to awake pid %d\n",task->pid);
+      task->psandbox->event = AWAKE;
+      break;
+    }
+  }
+  int success = wake_up_process(task);
   printk(KERN_INFO "psandbox syscall called psandbox_wakeup pid =%d; success =%d\n",task->pid,success);
   return 0;
 }
