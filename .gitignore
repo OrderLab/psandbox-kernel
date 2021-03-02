@@ -2,3 +2,4 @@ images/
 .bash_login
 cmake-build-debug/
 .idea/
+build/

@@ -7,7 +7,7 @@ cp /boot/config-`uname -r`* .config
 cd ../src
 make O=../build defconfig
 make O=../build kvm_guest.config 
-make O=../build -j4
+make O=../build -j $(nproc)
 
 if [ $? -ne 0 ]; then
   echo "Failed to build mysql"
