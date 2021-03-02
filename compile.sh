@@ -4,7 +4,7 @@ mkdir -p build
 cd build
 #cp ../linux-5.4/config-x86_64 .config
 cp /boot/config-`uname -r`* .config 
-cd ../linux-5.4
+cd ../src
 make O=../build defconfig
 make O=../build kvm_guest.config 
 make O=../build -j4

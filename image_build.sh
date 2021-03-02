@@ -2,10 +2,11 @@
 
 mkdir -p images
 cd images
-qemu-img create -f raw psandbox.img 4g
+qemu-img create psandbox.img 4g
 mkfs.ext2 psandbox.img 
+mkdir qemu-mount.dir
 sudo mount -o loop  psandbox.img qemu-mount.dir/ 
-sudo debootstrap --arch amd64 buster qemu-mount.dir
+sudo debootstrap --arch amd64  buster qemu-mount.dir http://ftp.cn.debian.org/debian/
 echo 'root:root' | sudo chroot qemu-mount.dir chpasswd
 sudo chroot qemu-mount.dir
 cat << EOF | sudo tee "qemu-mount.dir/etc/fstab"
