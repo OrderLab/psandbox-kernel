@@ -60,9 +60,6 @@ SYSCALL_DEFINE1(psandbox_wakeup, int, tid)
 	}
 	struct task_struct *task = find_get_task_by_vpid(tid);
 	for (j = 0; j < i; j++) {
-		printk(KERN_INFO
-		       "the id is %d, the sandbox pid is %d, the pid is %d\n",
-		       j, psandboxs[j].current_task, task);
 		if (psandboxs[j].current_task == task) {
 			printk(KERN_INFO "change to awake pid %d\n", task->pid);
 			task->psandbox->event = AWAKE;
@@ -74,4 +71,16 @@ SYSCALL_DEFINE1(psandbox_wakeup, int, tid)
 	       "psandbox syscall called psandbox_wakeup pid =%d; success =%d\n",
 	       task->pid, success);
 	return 0;
+}
+
+SYSCALL_DEFINE1(psandbox_penalty, long, penalty)
+{
+	ktime_t sleep_time = (s64)penalty;
+	printk(KERN_INFO
+	       "psandbox syscall called psandbox_penalty pid =%d\n",
+	       current->pid);
+	schedule_hrtimeout(&sleep_time,HRTIMER_MODE_ABS);
+	printk(KERN_INFO
+	       "psandbox penalty end pid =%d\n",
+	       current->pid);
 }

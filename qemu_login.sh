@@ -19,6 +19,7 @@ sudo mount -o loop $IMAGE_PATH $FS
 sleep 1
 sudo cp $ENV_DIR/.bash_login $FS/root
 #sudo cp $ENV_DIR/queue_case $FS/root
+sudo cp $ENV_DIR/mutex $FS/root
 sudo cp $ENV_DIR/sleep $FS/root
 sleep 1
 sudo umount $FS
