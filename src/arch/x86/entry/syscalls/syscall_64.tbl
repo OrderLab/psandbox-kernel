@@ -359,11 +359,13 @@
 435	common	clone3			__x64_sys_clone3/ptregs
 
 # psandbox syscalls
-436	common	PSANDBOX_create		__x64_sys_psandbox_create
-437	common	PSANDBOX_release	__x64_sys_psandbox_release
-438 	common  PSANDBOX_wakeup    	__x64_sys_psandbox_wakeup
-439	common	PSANDBOX_penalty	__x64_sys_psandbox_penalty
-
+436	common	create_psandbox		__x64_sys_create_psandbox
+437	common	release_psandbox	__x64_sys_release_psandbox
+438	common	get_psandbox		__x64_sys_get_psandbox
+439	common	active_psandbox		__x64_sys_active_psandbox
+440	common	freeze_psandbox		__x64_sys_freeze_psandbox
+441	common	update_psandbox		__x64_sys_update_psandbox
+441	common	update_condition_psandbox	__x64_sys_update_condition_psandbox
 #
 # x32-specific system call numbers start at 512 to avoid cache impact
 # for native 64-bit operation. The __x32_compat_sys stubs are created

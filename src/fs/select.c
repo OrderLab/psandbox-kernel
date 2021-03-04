@@ -257,9 +257,9 @@ static int poll_schedule_timeout(struct poll_wqueues *pwq, int state,
 	smp_store_mb(pwq->triggered, 0);
 
   	if(rc == -4 && current->psandbox) {
-		if(current->psandbox->event == AWAKE) {
+		if(current->psandbox->state == BOX_AWAKE) {
 			rc = 0;
-			current->psandbox->event = START;
+			current->psandbox->state = BOX_START;
 		}
   	}
 	return rc;
