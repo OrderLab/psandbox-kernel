@@ -276,12 +276,10 @@ SYSCALL_DEFINE2(update_psandbox, PsandboxEvent __user *, event, int, bid)
 			ktime_t delayed_time = current_tm - delaying_start_tm;
 
 			int num = size;
-			if (delayed_time > executing_time * psandbox->delay_ratio*num) {
+			if (delayed_time/executing_time >  psandbox->delay_ratio * num) {
 				delayed_in_ns += delayed_time;
 				tid = competitor_sandbox->current_task->pid;
 				delayed_competitors++;
-
-				break;
 			}
 		}
 
