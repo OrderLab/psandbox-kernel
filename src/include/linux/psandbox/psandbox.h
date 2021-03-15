@@ -15,6 +15,7 @@
 #include <linux/list.h>
 
 enum enum_event_type {
+	START_QUEUE,
 	TRY_QUEUE,
 	ENTER_QUEUE,
 	EXIT_QUEUE,
@@ -44,7 +45,7 @@ enum enum_queue_state {
 
 typedef struct activity {
 	struct timespec64 execution_start;
-	struct timespec64 delayed_time;
+	struct timespec64 defer_time;
 	struct timespec64 delaying_start;
 	enum enum_queue_state queue_state;
 } Activity;

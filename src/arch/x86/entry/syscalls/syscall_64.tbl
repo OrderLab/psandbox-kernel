@@ -365,7 +365,8 @@
 439	common	active_psandbox		__x64_sys_active_psandbox
 440	common	freeze_psandbox		__x64_sys_freeze_psandbox
 441	common	update_psandbox		__x64_sys_update_psandbox
-441	common	update_condition_psandbox	__x64_sys_update_condition_psandbox
+442	common	destroy_psandbox	__x64_sys_destroy_psandbox
+
 #
 # x32-specific system call numbers start at 512 to avoid cache impact
 # for native 64-bit operation. The __x32_compat_sys stubs are created

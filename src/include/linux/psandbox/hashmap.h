@@ -57,7 +57,7 @@
 
 /* We need to keep keys and values. */
 struct hashmap_element_s {
-	unsigned key;
+	unsigned long key;
 	int in_use;
 	void *data;
 };
@@ -96,7 +96,7 @@ static int hashmap_create(const unsigned initial_size,
 /// The key string slice is not copied when creating the hashmap entry, and thus
 /// must remain a valid pointer until the hashmap entry is removed or the
 /// hashmap is destroyed.
-static int hashmap_put(struct hashmap_s *const hashmap, unsigned key,
+static int hashmap_put(struct hashmap_s *const hashmap, unsigned long key,
 		       void *const value) HASHMAP_USED;
 
 /// @brief Get an element from the hashmap.
@@ -105,7 +105,7 @@ static int hashmap_put(struct hashmap_s *const hashmap, unsigned key,
 /// @param len The length of the string key.
 /// @return The previously set element, or NULL if none exists.
 static void *hashmap_get(const struct hashmap_s *const hashmap,
-			 unsigned key) HASHMAP_USED;
+			 unsigned long key) HASHMAP_USED;
 
 /// @brief Remove an element from the hashmap.
 /// @param hashmap The hashmap to remove from.
@@ -113,7 +113,7 @@ static void *hashmap_get(const struct hashmap_s *const hashmap,
 /// @param len The length of the string key.
 /// @return On success 0 is returned.
 static int hashmap_remove(struct hashmap_s *const hashmap,
-			  unsigned key) HASHMAP_USED;
+			  unsigned long key) HASHMAP_USED;
 
 /// @brief Remove an element from the hashmap.
 /// @param hashmap The hashmap to remove from.
@@ -123,7 +123,7 @@ static int hashmap_remove(struct hashmap_s *const hashmap,
 /// NULL is returned.
 static const char *
 hashmap_remove_and_return_key(struct hashmap_s *const hashmap,
-			      unsigned key) HASHMAP_USED;
+			      unsigned long key) HASHMAP_USED;
 
 /// @brief Iterate over all the elements in a hashmap.
 /// @param hashmap The hashmap to iterate over.
@@ -158,13 +158,11 @@ hashmap_num_entries(const struct hashmap_s *const hashmap) HASHMAP_USED;
 /// @param hashmap The hashmap to destroy.
 static void hashmap_destroy(struct hashmap_s *const hashmap) HASHMAP_USED;
 
-static unsigned hashmap_crc32_helper(const char *const s,
-				     const unsigned len) HASHMAP_USED;
 static unsigned hashmap_hash_helper_int_helper(const struct hashmap_s *const m,
-					       unsigned key) HASHMAP_USED;
+					       unsigned long key) HASHMAP_USED;
 static int hashmap_match_helper(const struct hashmap_element_s *const element,
-				unsigned key) HASHMAP_USED;
-static int hashmap_hash_helper(const struct hashmap_s *const m, unsigned key,
+				unsigned long key) HASHMAP_USED;
+static int hashmap_hash_helper(const struct hashmap_s *const m, unsigned long key,
 			       unsigned *const out_index) HASHMAP_USED;
 static int
 hashmap_rehash_iterator(void *const new_hash,
@@ -205,7 +203,7 @@ int hashmap_create(const unsigned initial_size,
 	return 0;
 }
 
-int hashmap_put(struct hashmap_s *const m, unsigned key, void *const value)
+int hashmap_put(struct hashmap_s *const m, unsigned long key, void *const value)
 {
 	unsigned int index;
 
@@ -230,7 +228,7 @@ int hashmap_put(struct hashmap_s *const m, unsigned key, void *const value)
 	return 0;
 }
 
-void *hashmap_get(const struct hashmap_s *const m, unsigned key)
+void *hashmap_get(const struct hashmap_s *const m, unsigned long key)
 {
 	unsigned int curr;
 	unsigned int i;
@@ -253,7 +251,7 @@ void *hashmap_get(const struct hashmap_s *const m, unsigned key)
 	return HASHMAP_NULL;
 }
 
-int hashmap_remove(struct hashmap_s *const m, unsigned key)
+int hashmap_remove(struct hashmap_s *const m, unsigned long key)
 {
 	unsigned int i;
 	unsigned int curr;
@@ -283,7 +281,7 @@ int hashmap_remove(struct hashmap_s *const m, unsigned key)
 }
 
 const char *hashmap_remove_and_return_key(struct hashmap_s *const m,
-					  unsigned key)
+					  unsigned long key)
 {
 	unsigned int i;
 	unsigned int curr;
@@ -372,7 +370,7 @@ unsigned hashmap_num_entries(const struct hashmap_s *const m)
 }
 
 unsigned hashmap_hash_helper_int_helper(const struct hashmap_s *const m,
-					unsigned key)
+					unsigned long key)
 {
 	/* Robert Jenkins' 32 bit Mix Function */
 	key += (key << 12);
@@ -391,12 +389,12 @@ unsigned hashmap_hash_helper_int_helper(const struct hashmap_s *const m,
 }
 
 int hashmap_match_helper(const struct hashmap_element_s *const element,
-			 unsigned key)
+			 unsigned long key)
 {
 	return (element->key == key);
 }
 
-int hashmap_hash_helper(const struct hashmap_s *const m, unsigned key,
+int hashmap_hash_helper(const struct hashmap_s *const m, unsigned long key,
 			unsigned *const out_index)
 {
 	unsigned int start, curr;
