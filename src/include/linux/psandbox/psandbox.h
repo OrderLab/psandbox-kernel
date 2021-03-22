@@ -21,14 +21,10 @@ enum enum_event_type {
 	EXIT_QUEUE,
 	SLEEP_BEGIN,
 	SLEEP_END,
-	UPDATE_QUEUE_CONDITION,
+	WAKEUP_QUEUE,
 	MUTEX_REQUIRE,
 	MUTEX_GET,
 	MUTEX_RELEASE
-};
-
-enum enum_key_type {
-	INTEGER, FLOAT, LONGLONG, MUTEX
 };
 
 enum enum_psandbox_state {
@@ -47,7 +43,9 @@ typedef struct activity {
 	struct timespec64 execution_start;
 	struct timespec64 defer_time;
 	struct timespec64 delaying_start;
+	int try_number;
 	enum enum_queue_state queue_state;
+//	LinkedList *current_competitor;
 } Activity;
 
 typedef struct psandbox_info {
@@ -57,16 +55,5 @@ typedef struct psandbox_info {
 	int delay_ratio;
 	Activity *activity;
 } PSandbox;
-
-typedef struct condition {
-	int value;
-	enum enum_condition compare;
-} Condition;
-
-typedef struct sandboxEvent {
-	enum enum_event_type event_type;
-	void* key;
-	enum enum_key_type key_type;
-} PsandboxEvent;
 
 #endif //LINUX_5_4_PSANDBOX_H

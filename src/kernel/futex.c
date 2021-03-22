@@ -1626,6 +1626,20 @@ futex_wake(u32 __user *uaddr, unsigned int flags, int nr_wake, u32 bitset)
 			if (!(this->bitset & bitset))
 				continue;
 
+			// Psandbox change
+//			if (this->task->psandbox) {
+//				struct linkedlist_element_s* node;
+//				struct linkedList *competitors = this->task->psandbox->activity->current_competitor;
+//				struct object o = get_object(uaddr);
+//				for (node = competitors->head; node != NULL; node = node->next) {
+//					PSandbox* competitor_sandbox = (PSandbox *)(node->data);
+//					long defer_tm = list_size(competitors) * o->avg_delay / 2 + timespec64_to_ktime(competitor_sandbox->activity->defer_time);
+//				git s	if (defer_tm < competitor_sandbox->delay_ratio * list_size(competitors)) {
+//						continue;
+//					}
+//				}
+//			}
+
 			mark_wake_futex(&wake_q, this);
 			if (++ret >= nr_wake)
 				break;
