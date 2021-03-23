@@ -87,156 +87,21 @@ SYSCALL_DEFINE4(update_psandbox, int, bid, enum enum_event_type, action, int,
 		return 0;
 
 	switch (action) {
-	case WAKEUP_QUEUE: {
-		time_t current_tm, delaying_start_tm, execution_start_tm,
-			executing_time, delayed_time;
-		struct timespec64 current_time;
-		int competitors_num = arg;
-		ktime_get_real_ts64(&current_time);
-		current_tm = timespec64_to_ktime(current_time);
-		delaying_start_tm =
-			timespec64_to_ktime(psandbox->activity->delaying_start);
-		execution_start_tm = timespec64_to_ktime(
-			psandbox->activity->execution_start);
-		executing_time = current_tm - execution_start_tm;
-		delayed_time = current_tm - delaying_start_tm;
-
-		if (delayed_time > (executing_time - delayed_time) *
-					   psandbox->delay_ratio * competitors_num) {
-			task->psandbox->state = BOX_AWAKE;
-			success = wake_up_process(task);
-			printk(KERN_INFO
-			       "psandbox syscall called psandbox_wakeup pid =%d; success =%d\n",
-			       task->pid, success);
-			break;
-		}
-		break;
-	}
 	case TRY_QUEUE: {
-		int competitors_num = arg;
-		if (current->pid == bid) {
-			struct timespec64 current_time;
-			ktime_t current_tm, delaying_start_tm,
-				execution_start_tm, executing_tm, defer_tm;
 
-			ktime_get_real_ts64(&current_time);
-			current_tm = timespec64_to_ktime(current_time);
-			delaying_start_tm = timespec64_to_ktime(
-				psandbox->activity->delaying_start);
-			execution_start_tm = timespec64_to_ktime(
-				psandbox->activity->execution_start);
-			executing_tm = current_tm - execution_start_tm;
-			defer_tm = current_tm - delaying_start_tm;
-//			psandbox->activity->try_number++;
-			//TODO: separate the detection part from the tracing part
-			if (defer_tm > (executing_tm - defer_tm) *
-					       psandbox->delay_ratio * competitors_num) {
-				return 1;
-			}
-			success = 0;
-		} else {
 			if (task_is_stopped(task))
 				return 0;
 			smp_store_mb(task->state, (TASK_INTERRUPTIBLE));
 			schedule();
 			return 1;
-		}
-		break;
 	}
-	case START_QUEUE:
-		ktime_get_real_ts64(&psandbox->activity->delaying_start);
-		break;
 	case ENTER_QUEUE: {
-		ktime_t current_tm, delaying_start_tm, defer_tm;
-		struct timespec64 current_time;
-		psandbox->activity->queue_state = QUEUE_ENTER;
-		ktime_get_real_ts64(&current_time);
-		current_tm = timespec64_to_ktime(current_time);
-		delaying_start_tm =
-			timespec64_to_ktime(psandbox->activity->delaying_start);
-		defer_tm = timespec64_to_ktime(psandbox->activity->defer_time);
-		defer_tm += current_tm - delaying_start_tm;
-		psandbox->activity->defer_time = ktime_to_timespec64(defer_tm);
 //		Object *o = hashmap_get(keys_map,uaddr);
 //		if(o) {
 //			o->avg_delay = 0;
 //			o->max_delay = 0;
 //			hashmap_put(&keys_map, uaddr, o);
 //		}
-		break;
-	}
-	case EXIT_QUEUE: {
-		int flag = arg;
-//		ktime_t defer_tm,current_tm ;
-//		struct timespec64 current_time;
-//		ktime_get_real_ts64(&current_time);
-//		current_tm = timespec64_to_ktime(current_time);
-//		defer_tm = psandbox->activity->delaying_start - current_tm;
-//		Object *o = hashmap_get(keys_map,uaddr);
-//		if ( o->max_delay < defer_tm ) {
-//			o->max_delay = defer_tm;
-//		}
-//		o->avg_delay += defer_tm/o->count;
-
-		if (flag == 1) {
-			wake_up_process(task);
-		}
-		break;
-	}
-	case MUTEX_REQUIRE:
-		ktime_get_real_ts64(&psandbox->activity->delaying_start);
-		break;
-	case MUTEX_GET: {
-		struct timespec64 current_time;
-		ktime_t current_tm, delaying_start_tm, defer_tm;
-		ktime_get_real_ts64(&current_time);
-		current_tm = timespec64_to_ktime(current_time);
-		delaying_start_tm =
-			timespec64_to_ktime(psandbox->activity->delaying_start);
-		defer_tm = timespec64_to_ktime(psandbox->activity->defer_time);
-		defer_tm += current_tm - delaying_start_tm;
-		psandbox->activity->defer_time = ktime_to_timespec64(defer_tm);
-//		Object *o = hashmap_get(keys_map,uaddr);
-//		if(o) {
-//			o->avg_delay = 0;
-//			o->max_delay = 0;
-//			hashmap_put(&keys_map, uaddr, o);
-//		}
-
-		break;
-	}
-	case MUTEX_RELEASE: {
-		int delayed_competitors = 0;
-		ktime_t penalty_ns = 0;
-		struct timespec64 current_time;
-		int competitors_num = arg;
-		ktime_t current_tm, delaying_start_tm, execution_start_tm,
-			executing_tm, defer_tm;
-
-		ktime_get_real_ts64(&current_time);
-		current_tm = timespec64_to_ktime(current_time);
-		delaying_start_tm =
-			timespec64_to_ktime(psandbox->activity->delaying_start);
-		execution_start_tm = timespec64_to_ktime(
-			psandbox->activity->execution_start);
-		executing_tm = current_tm - execution_start_tm;
-		defer_tm = current_tm - delaying_start_tm;
-
-		if (defer_tm >
-		    (executing_tm - defer_tm) * psandbox->delay_ratio * competitors_num) {
-			penalty_ns += defer_tm;
-			delayed_competitors++;
-		}
-//		Object *o = hashmap_get(keys_map,uaddr);
-//		if ( o->max_delay < defer_tm ) {
-//			o->max_delay = defer_tm;
-//		}
-//		o->avg_delay += defer_tm/o->count;
-
-		if (delayed_competitors) {
-			set_current_state(TASK_UNINTERRUPTIBLE);
-			schedule_hrtimeout(&penalty_ns, HRTIMER_MODE_REL);
-		}
 		break;
 	}
 	default:
@@ -262,43 +127,33 @@ SYSCALL_DEFINE4(update_psandbox, int, bid, enum enum_event_type, action, int,
 //
 //}
 
-SYSCALL_DEFINE1(active_psandbox, int, bid)
+SYSCALL_DEFINE1(wakeup_psandbox, int, bid)
 {
 	struct task_struct *task = find_get_task_by_vpid(bid);
 	PSandbox *psandbox;
+
 	if (!task || !task->psandbox || !task->psandbox->activity) {
-		printk(KERN_INFO "can't find sandbox based on the id\n");
+		printk(KERN_INFO "can't find sandbox based on the id %d\n",bid);
 		return -1;
 	}
+	printk(KERN_INFO
+	       "psandbox syscall called psandbox_wakeup pid =%d \n",
+	       task->pid);
 	psandbox = task->psandbox;
-	psandbox->state = BOX_ACTIVE;
-	ktime_get_real_ts64(&psandbox->activity->execution_start);
-	psandbox->activity->defer_time.tv_nsec = 0;
-	psandbox->activity->defer_time.tv_sec = 0;
-	psandbox->activity->delaying_start.tv_nsec = 0;
-	psandbox->activity->delaying_start.tv_sec = 0;
-//	psandbox->activity->try_number = 0;
+	psandbox->state = BOX_AWAKE;
+	wake_up_process(task);
+
 	return 0;
 }
 
-SYSCALL_DEFINE1(freeze_psandbox, int, bid)
+SYSCALL_DEFINE1(penalize_psandbox, int, penalty_ns)
 {
-	struct task_struct *task = find_get_task_by_vpid(bid);
-	PSandbox *psandbox;
-	if (!task || !task->psandbox) {
-		printk(KERN_INFO "can't find sandbox based on the id\n");
-		return -1;
-	}
-	psandbox = task->psandbox;
-	psandbox->state = BOX_FREEZE;
-	psandbox->activity->defer_time.tv_nsec = 0;
-	psandbox->activity->defer_time.tv_sec = 0;
-	psandbox->activity->delaying_start.tv_nsec = 0;
-	psandbox->activity->delaying_start.tv_sec = 0;
-	psandbox->activity->execution_start.tv_nsec = 0;
-	psandbox->activity->execution_start.tv_sec = 0;
-	psandbox->activity->queue_state = QUEUE_NULL;
-//	psandbox->activity->try_number = 0;
+	ktime_t penalty = penalty_ns;
+	printk(KERN_INFO
+	       "psandbox syscall called penalize_psandbox pid =%d \n",
+	       current->pid);
+	set_current_state(TASK_UNINTERRUPTIBLE);
+	schedule_hrtimeout(&penalty, HRTIMER_MODE_REL);
 	return 0;
 }
 
