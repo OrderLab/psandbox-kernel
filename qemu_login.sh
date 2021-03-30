@@ -15,15 +15,15 @@ QEMU_KERNEL="$ENV_DIR/build/arch/x86/boot/bzImage"
 QEMU="qemu-system-x86_64"
 #QEMU_EXTRA_FLAGS="-device e1000,netdev=net0,mac=DE:AD:BE:EF:7B:6A -netdev tap,id=net0"
 
-sudo mount -o loop $IMAGE_PATH $FS
-sleep 1
-sudo cp $ENV_DIR/.bash_login $FS/root
-sudo cp $ENV_DIR/queue $FS/root
-sudo cp $ENV_DIR/mutex $FS/root
-sudo cp $ENV_DIR/sleep $FS/root
-sudo cp $ENV_DIR/mutex_pre $FS/root
-sleep 1
-sudo umount $FS
+#sudo mount -o loop $IMAGE_PATH $FS
+#sleep 1
+#sudo cp $ENV_DIR/.bash_login $FS/root
+#sudo cp $ENV_DIR/queue $FS/root
+#sudo cp $ENV_DIR/mutex $FS/root
+#sudo cp $ENV_DIR/sleep $FS/root
+#sudo cp $ENV_DIR/mutex_pre $FS/root
+#sleep 1
+#sudo umount $FS
 sleep 1
 sudo $QEMU -kernel $QEMU_KERNEL  -hda $IMAGE_PATH \
       -append "root=/dev/sda console=ttyS0"\
