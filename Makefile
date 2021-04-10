@@ -30,6 +30,16 @@ $(error $(QEMU64) does not exist. Make sure qemu is installed)
 endif
 
 ### Building Linux kernel ###
+define BUILD_KERNEL
+	$(call INFO_MSG, Building image...)
+	mkdir -p build
+	cd build && cp /boot/config-`uname -r`* .config
+	cd src && make O=../build defconfig
+	cd src && make O=../build kvm_guest.config
+	cd src && make O=../build -j $(nproc)
+endef
+
+### Building images ###
 define BASE_LINUX_IMAGES_BUILD
 	$(call INFO_MSG, Building image...)
  	mkdir -p $(OUTDIR)
@@ -42,24 +52,30 @@ define BASE_LINUX_IMAGES_BUILD
 	echo 'adduser psandbox' | sudo chroot $(OUTDIR)/qemu-mount.dir
 	echo "passwd -d root" | sudo chroot $(OUTDIR)/qemu-mount.dir
 	echo "passwd -d psandbox" | sudo chroot $(OUTDIR)/qemu-mount.dir
-	sudo LIBGUESTFS_HV=$(SRC)/qemu.wrapper virt-copy-in -a $(OUTDIR)/psandbox.img $(SRC)/fstab  /etc/
-	sudo LIBGUESTFS_HV=$(SRC)/qemu.wrapper virt-copy-in -a $(OUTDIR)/psandbox.img $(SRC)/00mylinux /etc/network/interfaces.d/
+	echo "apt install sudo" | sudo chroot $(OUTDIR)/qemu-mount.dir
+	echo "usermod -aG sudo psandbox" | sudo chroot $(OUTDIR)/qemu-mount.dir
+	sudo umount $(OUTDIR)/qemu-mount.dir
 	
 	$(call INFO_MSG, Installing payload...)
 	sleep 30
+	sudo LIBGUESTFS_HV=$(SRC)/qemu.wrapper virt-copy-in -a $(OUTDIR)/psandbox.img $(SRC)/fstab  /etc/
 	sudo LIBGUESTFS_HV=$(SRC)/qemu.wrapper virt-copy-in -a $(OUTDIR)/psandbox.img $(SRC)/launch.sh $(SRC)/.bash_login  /home/psandbox/
+	sudo LIBGUESTFS_HV=$(SRC)/qemu.wrapper virt-copy-in -a $(OUTDIR)/psandbox.img $(SRC)/00mylinux /etc/network/interfaces.d/
 	sudo LIBGUESTFS_HV=$(SRC)/qemu.wrapper guestfish --rw -a $(OUTDIR)/psandbox.img -i mkdir /etc/systemd/system/getty@tty1.service.d/
   sudo LIBGUESTFS_HV=$(SRC)/qemu.wrapper virt-copy-in -a $(OUTDIR)/psandbox.img $(SRC)/override.conf /etc/systemd/system/getty@tty1.service.d/
-
-	sudo umount $(OUTDIR)/qemu-mount.dir
+	sudo LIBGUESTFS_HV=$(SRC)/qemu.wrapper guestfish --rw -a $(OUTDIR)/psandbox.img -i mkdir /etc/systemd/system/serial-getty@ttyS0.service.d/
+  sudo LIBGUESTFS_HV=$(SRC)/qemu.wrapper virt-copy-in -a $(OUTDIR)/psandbox.img $(SRC)/autologin.conf /etc/systemd/system/serial-getty@ttyS0.service.d/
 	$(call INFO_MSG,Booting disk image...)
 	$(QEMU64) -kernel $(QEMU_KERNEL) -hda $(OUTDIR)/psandbox.img $(QEMU_HD) -m 4g -no-reboot $(GRAPHICS) $(QEMU_KVM)
-
 endef
 
 
 all:
+	$(call BUILD_KERNEL)
+
+image:
 	$(call BASE_LINUX_IMAGES_BUILD)
 	$(call BUILD_PSANDBOX_IMAGE)
+
 clean:
 	rm -rf $(OUTDIR)/ 

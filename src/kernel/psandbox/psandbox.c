@@ -136,9 +136,9 @@ SYSCALL_DEFINE1(wakeup_psandbox, int, bid)
 		printk(KERN_INFO "can't find sandbox based on the id %d\n",bid);
 		return -1;
 	}
-	printk(KERN_INFO
-	       "psandbox syscall called psandbox_wakeup pid =%d \n",
-	       task->pid);
+//	printk(KERN_INFO
+//	       "psandbox syscall called psandbox_wakeup pid =%d \n",
+//	       task->pid);
 	psandbox = task->psandbox;
 	psandbox->state = BOX_AWAKE;
 	wake_up_process(task);
@@ -149,9 +149,9 @@ SYSCALL_DEFINE1(wakeup_psandbox, int, bid)
 SYSCALL_DEFINE1(penalize_psandbox, int, penalty_ns)
 {
 	ktime_t penalty = penalty_ns;
-	printk(KERN_INFO
-	       "psandbox syscall called penalize_psandbox pid =%d \n",
-	       current->pid);
+//	printk(KERN_INFO
+//	       "psandbox syscall called penalize_psandbox pid =%d \n",
+//	       current->pid);
 	set_current_state(TASK_UNINTERRUPTIBLE);
 	schedule_hrtimeout(&penalty, HRTIMER_MODE_REL);
 	return 0;

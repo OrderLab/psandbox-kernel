@@ -3,3 +3,4 @@ images/
 cmake-build-debug/
 .idea/
 build/
+launch.sh
