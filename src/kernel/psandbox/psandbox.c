@@ -17,15 +17,6 @@
 #include "linux/psandbox/linked_list.h"
 #include <linux/mutex.h>
 
-
-HashMap keys_map;
-
-typedef struct object {
-	int avg_delay;
-	int max_delay;
-	int count;
-} Object;
-
 /* This function will create a psandbox and bind to the current thread */
 SYSCALL_DEFINE1(create_psandbox, int, rule)
 {
@@ -39,11 +30,6 @@ SYSCALL_DEFINE1(create_psandbox, int, rule)
 	psandbox->activity = (Activity *)kzalloc(sizeof(Activity), GFP_KERNEL);
 	psandbox->state = BOX_START;
 	psandbox->delay_ratio = rule;
-//	if(keys_map.table_size == 0) {
-//		if (0 != hashmap_create(8, &keys_map)) {
-//			return -1;
-//		}
-//	}
 
 	printk(KERN_INFO "psandbox syscall called psandbox_create id =%d\n",
 	       current->pid);
@@ -69,63 +55,6 @@ SYSCALL_DEFINE1(release_psandbox, int, bid)
 	return 0;
 }
 
-//TODO: use a hashmap in futex.c to store uaddr
-SYSCALL_DEFINE4(update_psandbox, int, bid, enum enum_event_type, action, int,
-		arg ,u32 __user *, uaddr)
-{
-	struct task_struct *task = find_get_task_by_vpid(bid);
-	PSandbox *psandbox;
-	int success = 0;
-
-	if (!task || !task->psandbox) {
-		printk(KERN_INFO "can't find sandbox based on the id\n");
-		return -1;
-	}
-	psandbox = task->psandbox;
-
-	if (psandbox->state == BOX_FREEZE)
-		return 0;
-
-	switch (action) {
-	case TRY_QUEUE: {
-
-			if (task_is_stopped(task))
-				return 0;
-			smp_store_mb(task->state, (TASK_INTERRUPTIBLE));
-			schedule();
-			return 1;
-	}
-	case ENTER_QUEUE: {
-//		Object *o = hashmap_get(keys_map,uaddr);
-//		if(o) {
-//			o->avg_delay = 0;
-//			o->max_delay = 0;
-//			hashmap_put(&keys_map, uaddr, o);
-//		}
-		break;
-	}
-	default:
-		break;
-	}
-	return success;
-}
-
-//SYSCALL_DEFINE2(schedule_psandbox, u32 __user *, key, LinkedList __user *, competitors) {
-//	Object* o = hashmap_get(keys_map,key);
-//	struct linkedlist_element_s* node;
-//	ktime_t penalty_ns = 1000000;
-//	for (node = competitors->head; node != NULL; node = node->next) {
-//		PSandbox* competitor_sandbox = (PSandbox *)(node->data);
-//		long defer_tm = list_size(competitors) * o->avg_delay / 2 + timespec64_to_ktime(competitor_sandbox->activity->defer_time);
-//		if (defer_tm > competitor_sandbox->delay_ratio * list_size(competitors)) {
-//			wake_up_process(competitor_sandbox->current_task);
-//			set_current_state(TASK_INTERRUPTIBLE);
-//			schedule_hrtimeout(penalty_ns, HRTIMER_MODE_REL);
-//			break;
-//		}
-//	}
-//
-//}
 
 SYSCALL_DEFINE1(wakeup_psandbox, int, bid)
 {
@@ -146,14 +75,29 @@ SYSCALL_DEFINE1(wakeup_psandbox, int, bid)
 	return 0;
 }
 
-SYSCALL_DEFINE1(penalize_psandbox, int, penalty_ns)
+SYSCALL_DEFINE2(penalize_psandbox, int, bid, int, penalty_ns)
 {
 	ktime_t penalty = penalty_ns;
-//	printk(KERN_INFO
-//	       "psandbox syscall called penalize_psandbox pid =%d \n",
-//	       current->pid);
-	set_current_state(TASK_UNINTERRUPTIBLE);
-	schedule_hrtimeout(&penalty, HRTIMER_MODE_REL);
+
+	if(penalty_ns > 0) {
+		set_current_state(TASK_UNINTERRUPTIBLE);
+		schedule_hrtimeout(&penalty, HRTIMER_MODE_REL);
+	} else {
+		struct task_struct *task = find_get_task_by_vpid(bid);
+
+		if (!task || !task->psandbox) {
+			printk(KERN_INFO "can't find sandbox based on the id\n");
+			return -1;
+		}
+//		printk(KERN_INFO "call penalize psandbox %d\n",bid);
+		if (task_is_stopped(task))
+			return 0;
+
+		smp_store_mb(task->state, (TASK_UNINTERRUPTIBLE));
+		schedule();
+		return 1;
+	}
+
 	return 0;
 }
 
@@ -164,9 +108,4 @@ SYSCALL_DEFINE0(get_psandbox)
 		return -1;
 	}
 	return current->pid;
-}
-
-SYSCALL_DEFINE0(destroy_psandbox)
-{
-	return 0;
 }

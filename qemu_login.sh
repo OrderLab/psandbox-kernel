@@ -17,7 +17,7 @@ QEMU="qemu-system-x86_64"
 
 sudo LIBGUESTFS_HV=./guest-images/qemu.wrapper virt-copy-in -a images/psandbox.img launch.sh /home/psandbox/
 sudo LIBGUESTFS_HV=./guest-images/qemu.wrapper virt-copy-in -a images/psandbox.img ../psandbox-userlib/cmake-build-debug/libpsandbox.so /home/psandbox/software
-sudo LIBGUESTFS_HV=./guest-images/qemu.wrapper virt-copy-in -a images/psandbox.img /home/psandbox/software/mysql/dist/bin/mysqld /home/psandbox/software/mysql/dist/
+sudo LIBGUESTFS_HV=./guest-images/qemu.wrapper virt-copy-in -a images/psandbox.img my.cnf /home/psandbox/software/mysql/dist/bin/mysqld /home/psandbox/software/mysql/dist/
 sleep 1
 LD_PRELOAD="../psandbox-userlib/cmake-build-debug/libpsandbox.so" $QEMU -kernel $QEMU_KERNEL  -hda $IMAGE_PATH \
       -append "root=/dev/sda console=ttyS0"\
