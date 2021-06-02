@@ -13,12 +13,11 @@
 #include <linux/syscalls.h>
 #include <linux/sched.h>
 #include <linux/time.h>
-#include "linux/psandbox/hashmap.h"
-#include "linux/psandbox/linked_list.h"
 #include <linux/mutex.h>
 
+
 /* This function will create a psandbox and bind to the current thread */
-SYSCALL_DEFINE1(create_psandbox, int, rule)
+SYSCALL_DEFINE0(create_psandbox)
 {
 	PSandbox *psandbox;
 	psandbox = (PSandbox *)kmalloc(sizeof(PSandbox), GFP_KERNEL);
@@ -29,7 +28,6 @@ SYSCALL_DEFINE1(create_psandbox, int, rule)
 	current->psandbox = psandbox;
 	psandbox->activity = (Activity *)kzalloc(sizeof(Activity), GFP_KERNEL);
 	psandbox->state = BOX_START;
-	psandbox->delay_ratio = rule;
 
 	printk(KERN_INFO "psandbox syscall called psandbox_create id =%d\n",
 	       current->pid);
@@ -50,8 +48,8 @@ SYSCALL_DEFINE1(release_psandbox, int, bid)
 
 	kfree(task->psandbox->activity);
 	kfree(task->psandbox);
-	printk(KERN_INFO "psandbox syscall called psandbox_release id =%d\n",
-	       current->pid);
+//	printk(KERN_INFO "psandbox syscall called psandbox_release id =%d\n",
+//	       current->pid);
 	return 0;
 }
 
@@ -68,43 +66,50 @@ SYSCALL_DEFINE1(wakeup_psandbox, int, bid)
 //	printk(KERN_INFO
 //	       "psandbox syscall called psandbox_wakeup pid =%d \n",
 //	       task->pid);
-	psandbox = task->psandbox;
-	psandbox->state = BOX_AWAKE;
 	wake_up_process(task);
-
 	return 0;
 }
 
-SYSCALL_DEFINE2(penalize_psandbox, int, bid, int, penalty_ns)
+SYSCALL_DEFINE2(penalize_psandbox, int, bid, int, penalty_us)
 {
-	ktime_t penalty = penalty_ns;
+	ktime_t penalty = penalty_us * 1000;
 
-	if(penalty_ns > 0) {
-		set_current_state(TASK_UNINTERRUPTIBLE);
+	if(bid == current->pid) {
+		set_current_state(TASK_INTERRUPTIBLE);
 		schedule_hrtimeout(&penalty, HRTIMER_MODE_REL);
 	} else {
 		struct task_struct *task = find_get_task_by_vpid(bid);
-
+		unsigned long timeout;
 		if (!task || !task->psandbox) {
 			printk(KERN_INFO "can't find sandbox based on the id\n");
 			return -1;
 		}
-//		printk(KERN_INFO "call penalize psandbox %d\n",bid);
-		if (task_is_stopped(task))
-			return 0;
+printk(KERN_INFO "called here\n");
+		if (penalty_us == 0) {
+			smp_store_mb(task->state, (TASK_INTERRUPTIBLE));
+			if (task_is_stopped(task))
+				return -1;
+			schedule();
+		} else {
+			smp_store_mb(task->state, (TASK_INTERRUPTIBLE));
+			if (task_is_stopped(task))
+				return -1;
 
-		smp_store_mb(task->state, (TASK_UNINTERRUPTIBLE));
-		schedule();
+			timeout = usecs_to_jiffies(penalty_us);
+			psandbox_schedule_timeout(timeout,task);
+		}
+
+
 		return 1;
 	}
 
-	return 0;
+	return 1;
 }
 
 SYSCALL_DEFINE0(get_psandbox)
 {
 	if (!current->psandbox) {
-		printk(KERN_INFO "there is no psandbox in current thread\n");
+//		printk(KERN_INFO "there is no psandbox in current thread\n");
 		return -1;
 	}
 	return current->pid;

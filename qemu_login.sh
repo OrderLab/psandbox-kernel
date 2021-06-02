@@ -15,7 +15,8 @@ QEMU_KERNEL="$ENV_DIR/build/arch/x86/boot/bzImage"
 QEMU="qemu-system-x86_64"
 #QEMU_EXTRA_FLAGS="-device e1000,netdev=net0,mac=DE:AD:BE:EF:7B:6A -netdev tap,id=net0"
 
-sudo LIBGUESTFS_HV=./guest-images/qemu.wrapper virt-copy-in -a images/psandbox.img launch.sh /home/psandbox/
+#sudo LIBGUESTFS_HV=./guest-images/qemu.wrapper virt-copy-in -a images/psandbox.img ../psandbox-userlib/cmake-build-debug/nest /home/psandbox/
+sudo LIBGUESTFS_HV=./guest-images/qemu.wrapper virt-copy-in -a images/psandbox.img launch.sh  guest-images/.bash_login /home/psandbox/
 sudo LIBGUESTFS_HV=./guest-images/qemu.wrapper virt-copy-in -a images/psandbox.img ../psandbox-userlib/cmake-build-debug/libpsandbox.so /home/psandbox/software
 sudo LIBGUESTFS_HV=./guest-images/qemu.wrapper virt-copy-in -a images/psandbox.img my.cnf /home/psandbox/software/mysql/dist/bin/mysqld /home/psandbox/software/mysql/dist/
 sleep 1

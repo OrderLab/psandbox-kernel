@@ -61,8 +61,6 @@ define BASE_LINUX_IMAGES_BUILD
 	sudo LIBGUESTFS_HV=$(SRC)/qemu.wrapper virt-copy-in -a $(OUTDIR)/psandbox.img $(SRC)/fstab  /etc/
 	sudo LIBGUESTFS_HV=$(SRC)/qemu.wrapper virt-copy-in -a $(OUTDIR)/psandbox.img $(SRC)/launch.sh $(SRC)/.bash_login  /home/psandbox/
 	sudo LIBGUESTFS_HV=$(SRC)/qemu.wrapper virt-copy-in -a $(OUTDIR)/psandbox.img $(SRC)/00mylinux /etc/network/interfaces.d/
-	sudo LIBGUESTFS_HV=$(SRC)/qemu.wrapper guestfish --rw -a $(OUTDIR)/psandbox.img -i mkdir /etc/systemd/system/getty@tty1.service.d/
-  sudo LIBGUESTFS_HV=$(SRC)/qemu.wrapper virt-copy-in -a $(OUTDIR)/psandbox.img $(SRC)/override.conf /etc/systemd/system/getty@tty1.service.d/
 	sudo LIBGUESTFS_HV=$(SRC)/qemu.wrapper guestfish --rw -a $(OUTDIR)/psandbox.img -i mkdir /etc/systemd/system/serial-getty@ttyS0.service.d/
   sudo LIBGUESTFS_HV=$(SRC)/qemu.wrapper virt-copy-in -a $(OUTDIR)/psandbox.img $(SRC)/autologin.conf /etc/systemd/system/serial-getty@ttyS0.service.d/
 	$(call INFO_MSG,Booting disk image...)
