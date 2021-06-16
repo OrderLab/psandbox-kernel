@@ -28,7 +28,7 @@ enum enum_event_type {
 };
 
 enum enum_psandbox_state {
-	BOX_ACTIVE, BOX_FREEZE, BOX_START, BOX_AWAKE
+	BOX_ACTIVE, BOX_FREEZE, BOX_START, BOX_AWAKE, BOX_PREEMPTED
 };
 
 enum enum_condition {
@@ -45,7 +45,6 @@ typedef struct activity {
 	struct timespec64 delaying_start;
 	int try_number;
 	enum enum_queue_state queue_state;
-//	LinkedList *current_competitor;
 } Activity;
 
 typedef struct psandbox_info {

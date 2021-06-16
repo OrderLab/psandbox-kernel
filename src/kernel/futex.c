@@ -1595,7 +1595,7 @@ static int
 futex_wake(u32 __user *uaddr, unsigned int flags, int nr_wake, u32 bitset)
 {
 	struct futex_hash_bucket *hb;
-	struct futex_q *this, *next;
+	struct futex_q *this, *next, *psandbox = 0;
 	union futex_key key = FUTEX_KEY_INIT;
 	int ret;
 	DEFINE_WAKE_Q(wake_q);
@@ -1614,6 +1614,26 @@ futex_wake(u32 __user *uaddr, unsigned int flags, int nr_wake, u32 bitset)
 		goto out_put_key;
 
 	spin_lock(&hb->lock);
+	// Psandbox change
+//	plist_for_each_entry_safe(this, next, &hb->chain, list) {
+//		if (match_futex (&this->key, &key)) {
+//			if (this->pi_state || this->rt_waiter) {
+//				ret = -EINVAL;
+//				break;
+//			}
+//
+//			/* Check if one of the bits is set in both bitsets */
+//			if (!(this->bitset & bitset))
+//				continue;
+//
+//			if (this->task->psandbox && this->task->psandbox->state == BOX_AWAKE && this->task->psandbox->bid > 0 && this->task->psandbox->bid < 300) {
+//				printk(KERN_INFO "find sandbox based on the id %d, state is %d\n",this->task->psandbox->bid,this->task->psandbox->state);
+//				this->task->psandbox->state = BOX_ACTIVE;
+//				psandbox = this;
+//				break;
+//			}
+//		}
+//	}
 
 	plist_for_each_entry_safe(this, next, &hb->chain, list) {
 		if (match_futex (&this->key, &key)) {
@@ -1626,20 +1646,12 @@ futex_wake(u32 __user *uaddr, unsigned int flags, int nr_wake, u32 bitset)
 			if (!(this->bitset & bitset))
 				continue;
 
-			// Psandbox change
-//			if (this->task->psandbox) {
-//				struct linkedlist_element_s* node;
-//				struct linkedList *competitors = this->task->psandbox->activity->current_competitor;
-//				struct object o = get_object(uaddr);
-//				for (node = competitors->head; node != NULL; node = node->next) {
-//					PSandbox* competitor_sandbox = (PSandbox *)(node->data);
-//					long defer_tm = list_size(competitors) * o->avg_delay / 2 + timespec64_to_ktime(competitor_sandbox->activity->defer_time);
-//				git s	if (defer_tm < competitor_sandbox->delay_ratio * list_size(competitors)) {
-//						continue;
-//					}
-//				}
-//			}
-
+			if (this->task->psandbox && this->task->psandbox->state == BOX_PREEMPTED)
+				continue;
+//			if(psandbox && this != psandbox)
+//				continue;
+//			if(psandbox)
+//				printk(KERN_INFO "wakeup the %d\n",this->task->psandbox->bid);
 			mark_wake_futex(&wake_q, this);
 			if (++ret >= nr_wake)
 				break;

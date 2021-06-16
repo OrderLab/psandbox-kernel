@@ -24,6 +24,7 @@ SYSCALL_DEFINE0(create_psandbox)
 	if (!psandbox) {
 		return -1;
 	}
+	psandbox->bid = current->pid;
 	psandbox->current_task = current;
 	current->psandbox = psandbox;
 	psandbox->activity = (Activity *)kzalloc(sizeof(Activity), GFP_KERNEL);
@@ -66,6 +67,7 @@ SYSCALL_DEFINE1(wakeup_psandbox, int, bid)
 //	printk(KERN_INFO
 //	       "psandbox syscall called psandbox_wakeup pid =%d \n",
 //	       task->pid);
+	task->psandbox->state = BOX_AWAKE;
 	wake_up_process(task);
 	return 0;
 }
@@ -84,9 +86,9 @@ SYSCALL_DEFINE2(penalize_psandbox, int, bid, int, penalty_us)
 			printk(KERN_INFO "can't find sandbox based on the id\n");
 			return -1;
 		}
-printk(KERN_INFO "called here\n");
 		if (penalty_us == 0) {
-			smp_store_mb(task->state, (TASK_INTERRUPTIBLE));
+			smp_store_mb(task->psandbox->state, BOX_PREEMPTED);
+			smp_store_mb(task->state, (TASK_UNINTERRUPTIBLE));
 			if (task_is_stopped(task))
 				return -1;
 			schedule();
