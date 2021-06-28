@@ -53,6 +53,7 @@ typedef struct psandbox_info {
 	enum enum_psandbox_state state;
 	int delay_ratio;
 	Activity *activity;
+	int white_mutex;
 } PSandbox;
 
 #endif //LINUX_5_4_PSANDBOX_H

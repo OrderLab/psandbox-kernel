@@ -15,7 +15,7 @@
 #include <linux/time.h>
 #include <linux/mutex.h>
 
-
+int mutex = 0;
 /* This function will create a psandbox and bind to the current thread */
 SYSCALL_DEFINE0(create_psandbox)
 {
@@ -29,6 +29,7 @@ SYSCALL_DEFINE0(create_psandbox)
 	current->psandbox = psandbox;
 	psandbox->activity = (Activity *)kzalloc(sizeof(Activity), GFP_KERNEL);
 	psandbox->state = BOX_START;
+	psandbox->white_mutex = mutex;
 
 	printk(KERN_INFO "psandbox syscall called psandbox_create id =%d\n",
 	       current->pid);
@@ -49,11 +50,46 @@ SYSCALL_DEFINE1(release_psandbox, int, bid)
 
 	kfree(task->psandbox->activity);
 	kfree(task->psandbox);
-//	printk(KERN_INFO "psandbox syscall called psandbox_release id =%d\n",
-//	       current->pid);
+	printk(KERN_INFO "psandbox syscall called psandbox_release id =%d\n",
+	       current->pid);
 	return 0;
 }
 
+SYSCALL_DEFINE3(compensate_psandbox,int, noisy_bid,int, victim_bid, int, penalty_us){
+	struct task_struct *task = find_get_task_by_vpid(noisy_bid);
+	unsigned long timeout;
+	if (!task || !task->psandbox) {
+		printk(KERN_INFO "can't find sandbox based on the id\n");
+		return -1;
+	}
+	if (penalty_us == 0) {
+		smp_store_mb(task->psandbox->state, BOX_PREEMPTED);
+		smp_store_mb(task->state, (TASK_UNINTERRUPTIBLE));
+		if (task_is_stopped(task))
+			return -1;
+		schedule();
+	} else {
+		smp_store_mb(task->state, (TASK_INTERRUPTIBLE));
+		if (task_is_stopped(task))
+			return -1;
+
+		timeout = usecs_to_jiffies(penalty_us);
+		psandbox_schedule_timeout(timeout,task);
+	}
+
+	task = find_get_task_by_vpid(victim_bid);
+
+	if (!task || !task->psandbox || !task->psandbox->activity) {
+		printk(KERN_INFO "can't find sandbox based on the id %d\n",victim_bid);
+		return -1;
+	}
+//	printk(KERN_INFO
+//	       "psandbox syscall called psandbox_wakeup pid =%d \n",
+//	       task->pid);
+	task->psandbox->state = BOX_AWAKE;
+	wake_up_process(task);
+	return 1;
+}
 
 SYSCALL_DEFINE1(wakeup_psandbox, int, bid)
 {
@@ -100,8 +136,6 @@ SYSCALL_DEFINE2(penalize_psandbox, int, bid, int, penalty_us)
 			timeout = usecs_to_jiffies(penalty_us);
 			psandbox_schedule_timeout(timeout,task);
 		}
-
-
 		return 1;
 	}
 
@@ -115,4 +149,8 @@ SYSCALL_DEFINE0(get_psandbox)
 		return -1;
 	}
 	return current->pid;
+}
+
+SYSCALL_DEFINE1(start_manager,int , uaddr) {
+	mutex = uaddr;
 }

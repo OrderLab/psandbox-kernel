@@ -76,4 +76,4 @@ image:
 	$(call BUILD_PSANDBOX_IMAGE)
 
 clean:
-	rm -rf $(OUTDIR)/ 
+-hda	rm -rf $(OUTDIR)/ 
