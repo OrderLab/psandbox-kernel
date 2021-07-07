@@ -58,12 +58,17 @@ typedef struct psandbox_info {
 	struct task_struct *current_task;
 	enum enum_psandbox_state state;
 	int delay_ratio;
+	int tail_requirement;
 	Activity *activity;
 	int finished_activities;
+	int bad_activities;
 	int action_level;
 	int compensation_ticket;
 	struct list_head *white_list;
 	int is_white;
+
+	// Debug
+	int is_futex;
 } PSandbox;
 
 #endif //LINUX_5_4_PSANDBOX_H

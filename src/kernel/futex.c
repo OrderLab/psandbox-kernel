@@ -1619,6 +1619,26 @@ futex_wake(u32 __user *uaddr, unsigned int flags, int nr_wake, u32 bitset)
 
 	spin_lock(&hb->lock);
 	// Psandbox change
+//	if (current->psandbox && current->psandbox->is_futex) {
+//		plist_for_each_entry_safe(this, next, &hb->chain, list) {
+//			if (match_futex (&this->key, &key)) {
+//				if (this->pi_state || this->rt_waiter) {
+//					ret = -EINVAL;
+//					break;
+//				}
+//
+//				/* Check if one of the bits is set in both bitsets */
+//				if (!(this->bitset & bitset))
+//					continue;
+//
+//				if (this->task->psandbox && this->task->psandbox->state != BOX_FREEZE) {
+//					content_n++;
+//				}
+//			}
+//		}
+//	}
+
+
 	plist_for_each_entry_safe(this, next, &hb->chain, list) {
 		if (match_futex (&this->key, &key)) {
 			if (this->pi_state || this->rt_waiter) {
@@ -1629,47 +1649,28 @@ futex_wake(u32 __user *uaddr, unsigned int flags, int nr_wake, u32 bitset)
 			/* Check if one of the bits is set in both bitsets */
 			if (!(this->bitset & bitset))
 				continue;
+//			if(current->psandbox && current->psandbox->is_futex) {
+//				psandbox = this->task->psandbox;
+//				if (psandbox && psandbox->state != BOX_FREEZE && !psandbox->is_white) {
+//					struct timespec64 current_tm;
+//					psandbox->activity->activity_state = ACTIVITY_ENTER;
+//					ktime_get_real_ts64(&current_tm);
+//					current_tm = timespec64_sub(current_tm,psandbox->activity->delaying_start);
+//					psandbox->activity->defer_time = timespec64_add(current_tm,psandbox->activity->defer_time);
+//				} else if (psandbox && psandbox->state != BOX_FREEZE && psandbox->is_white) {
+//					psandbox->is_white = 0;
+//				}
+//
+//				if (psandbox && psandbox->state != BOX_FREEZE) {
+//					defer_tm = timespec64_to_ktime(psandbox->activity->defer_time);
+//					ktime_get_real_ts64(&current_tm);
+//					executing_tm = timespec64_to_ktime(timespec64_sub(current_tm, psandbox->activity->execution_start));
+//					if (defer_tm > (executing_tm - defer_tm) * psandbox->delay_ratio * content_n) {
+//						current->psandbox->activity->activity_state = ACTIVITY_PREEMPTED;
+//					}
+//				}
+//			}
 
-			if (this->task->psandbox && this->task->psandbox->state != BOX_FREEZE) {
-				content_n++;
-			}
-		}
-	}
-
-	plist_for_each_entry_safe(this, next, &hb->chain, list) {
-		if (match_futex (&this->key, &key)) {
-			if (this->pi_state || this->rt_waiter) {
-				ret = -EINVAL;
-				break;
-			}
-
-			/* Check if one of the bits is set in both bitsets */
-			if (!(this->bitset & bitset))
-				continue;
-
-//			if (this->task->psandbox && this->task->psandbox->state == BOX_PREEMPTED)
-//				continue;
-//			if(psandbox && this != psandbox)
-//				continue;
-			psandbox = this->task->psandbox;
-			if (psandbox && psandbox->state != BOX_FREEZE && !psandbox->is_white) {
-				struct timespec64 current_tm;
-				psandbox->activity->activity_state = ACTIVITY_ENTER;
-				ktime_get_real_ts64(&current_tm);
-				current_tm = timespec64_sub(current_tm,psandbox->activity->delaying_start);
-				psandbox->activity->defer_time = timespec64_add(current_tm,psandbox->activity->defer_time);
-			} else if (psandbox && psandbox->state != BOX_FREEZE && psandbox->is_white) {
-				psandbox->is_white = 0;
-			}
-
-			if (psandbox && psandbox->state != BOX_FREEZE) {
-				defer_tm = timespec64_to_ktime(psandbox->activity->defer_time);
-				ktime_get_real_ts64(&current_tm);
-				executing_tm = timespec64_to_ktime(timespec64_sub(current_tm, psandbox->activity->execution_start));
-				if (defer_tm > (executing_tm - defer_tm) * psandbox->delay_ratio * content_n) {
-					current->psandbox->activity->activity_state = ACTIVITY_PREEMPTED;
-				}
-			}
 
 			mark_wake_futex(&wake_q, this);
 			if (++ret >= nr_wake)
@@ -1683,10 +1684,11 @@ futex_wake(u32 __user *uaddr, unsigned int flags, int nr_wake, u32 bitset)
 out_put_key:
 	put_futex_key(&key);
 out:
-	if (current->psandbox && current->psandbox->state != BOX_FREEZE && current->psandbox->activity->activity_state == ACTIVITY_PREEMPTED) {
-		set_current_state(TASK_INTERRUPTIBLE);
-		schedule_hrtimeout(&defer_tm, HRTIMER_MODE_REL);
-	}
+//	if (current->psandbox && current->psandbox->state != BOX_FREEZE &&
+//	    current->psandbox->activity->activity_state == ACTIVITY_PREEMPTED && current->psandbox->is_futex) {
+//		set_current_state(TASK_INTERRUPTIBLE);
+//		schedule_hrtimeout(&defer_tm, HRTIMER_MODE_REL);
+//	}
 	return ret;
 }
 
@@ -2311,7 +2313,7 @@ static inline void __queue_me(struct futex_q *q, struct futex_hash_bucket *hb)
 	 * Thus, all RT-threads are woken first in priority order, and
 	 * the others are woken last, in FIFO order.
 	 */
-	if(current->psandbox && current->psandbox->state != BOX_FREEZE && !current->psandbox->is_white) {
+	if(current->psandbox && current->psandbox->state != BOX_FREEZE && !current->psandbox->is_white && current->psandbox->is_futex) {
 		current->psandbox->activity->activity_state = ACTIVITY_WAITING;
 		ktime_get_real_ts64(&current->psandbox->activity->delaying_start);
 	}
