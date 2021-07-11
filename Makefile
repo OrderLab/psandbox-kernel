@@ -10,7 +10,7 @@ SRC ?= $(dir $(abspath $(lastword $(MAKEFILE_LIST))))/guest-images
 
 
 # If your host does not support KVM, comment out this variable.
-QEMU_KVM ?= -enable-kvm
+#QEMU_KVM ?= -enable-kvm
 
 # Comment out this variable to enable graphic output
 GRAPHICS ?= -nographic -monitor null
@@ -36,7 +36,7 @@ define BUILD_KERNEL
 	cd build && cp /boot/config-`uname -r`* .config
 	cd src && make O=../build defconfig
 	cd src && make O=../build kvm_guest.config
-	cd src && make O=../build -j $(nproc)
+	cd src && make O=../build -j `nproc`
 endef
 
 ### Building images ###
@@ -76,4 +76,4 @@ image:
 	$(call BUILD_PSANDBOX_IMAGE)
 
 clean:
--hda	rm -rf $(OUTDIR)/ 
+	rm -rf $(OUTDIR)/ 
