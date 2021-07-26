@@ -45,6 +45,8 @@ typedef struct activity {
 	struct timespec64 defer_time;
 	struct timespec64 delaying_start;
 	struct timespec64 execution_time;
+	struct timespec64 last_unbind_start;
+	struct timespec64 unbind_time;
 	int try_number;
 } Activity;
 
@@ -66,6 +68,8 @@ typedef struct psandbox_info {
 	int compensation_ticket;
 	struct list_head *white_list;
 	int is_white;
+
+	size_t task_key;
 
 	// Debug
 	int is_futex;
