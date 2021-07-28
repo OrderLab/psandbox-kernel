@@ -263,7 +263,9 @@ SYSCALL_DEFINE2(update_event, BoxEvent __user *, event, int, bid) {
 					ACTIVITY_WAITING) {
 				ktime_get_real_ts64(&current_tm);
 				defer_tm = timespec64_sub(current_tm,psandbox->activity->delaying_start);
-				executing_tm = timespec64_sub(timespec64_sub(current_tm,psandbox->activity->execution_start),defer_tm);
+				executing_tm = timespec64_sub(
+					timespec64_sub(timespec64_sub(current_tm,psandbox->activity->execution_start),defer_tm),
+					psandbox->activity->unbind_time);
 
 				if (timespec64_to_ns(&defer_tm) > timespec64_to_ns(&executing_tm) *
 					psandbox->delay_ratio * total_psandbox) {
@@ -469,11 +471,12 @@ SYSCALL_DEFINE1(bind_psandbox, u64, addr)
 		}
 	}
 	spin_unlock(&transfers_lock);
+	if (!psandbox)
+		return -1;
 
 	current->psandbox = psandbox;
 	psandbox->bid = current->pid;
 	psandbox->current_task = current;
-
 
 	ktime_get_real_ts64(&current_tm);
 	unbind_tm =
