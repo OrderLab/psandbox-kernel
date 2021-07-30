@@ -23,7 +23,8 @@ struct task_struct;
 enum enum_event_type {
 	PREPARE,
 	ENTER,
-	EXIT,
+	HOLD,
+	UNHOLD,
 };
 
 typedef struct sandboxEvent {
@@ -39,11 +40,18 @@ enum enum_activity_state {
 	ACTIVITY_WAITING,ACTIVITY_ENTER,ACTIVITY_EXIT,ACTIVITY_PREEMPTED,ACTIVITY_PROMOTED
 };
 
+struct delaying_start {
+	struct timespec64 delaying_start;
+	u32 key;
+	struct list_head list;
+};
+
 typedef struct activity {
 	enum enum_activity_state activity_state;
 	struct timespec64 execution_start;
 	struct timespec64 defer_time;
-	struct timespec64 delaying_start;
+	struct list_head delay_list;
+
 	struct timespec64 execution_time;
 	int try_number;
 } Activity;
@@ -66,6 +74,7 @@ typedef struct psandbox_info {
 	int compensation_ticket;
 	struct list_head *white_list;
 	int is_white;
+	struct hlist_node node;
 
 	// Debug
 	int is_futex;
