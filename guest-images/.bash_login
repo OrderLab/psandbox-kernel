@@ -1,0 +1,5 @@
+#!/bin/sh
+
+sudo chown -R psandbox /home/psandbox
+chmod +x ./launch.sh
+./launch.sh
