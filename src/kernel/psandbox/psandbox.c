@@ -19,11 +19,16 @@
 
 struct list_head white_mutexs;
 int total_psandbox = 0;
-spinlock_t competitors_lock;
-spinlock_t holders_lock;
-int pid = 0;
+__cacheline_aligned DEFINE_RWLOCK(competitors_lock);
+__cacheline_aligned DEFINE_RWLOCK(holders_lock);
+
 #define COMPENSATION_TICKET_NUMBER	1000L
 #define PROBING_NUMBER 100
+
+typedef struct psandbox_node {
+	PSandbox *psandbox;
+	struct hlist_node node;
+}PSandboxNode;
 
 DECLARE_HASHTABLE(competitors_map, 10);
 DECLARE_HASHTABLE(holders_map, 10);
@@ -52,9 +57,7 @@ SYSCALL_DEFINE0(create_psandbox)
 	psandbox->bad_activities = 0;
 	INIT_LIST_HEAD(&psandbox->activity->delay_list);
 	total_psandbox++;
-	if(total_psandbox == 5) {
-		pid = psandbox->bid;
-	}
+
 	printk(KERN_INFO "psandbox syscall called psandbox_create id =%d\n",
 	       current->pid);
 	return psandbox->current_task->pid;
@@ -62,7 +65,7 @@ SYSCALL_DEFINE0(create_psandbox)
 
 SYSCALL_DEFINE1(release_psandbox, int, bid)
 {
-	PSandbox *cur;
+	PSandboxNode *cur;
 	struct delaying_start *pos,*temp;
 	unsigned bkt;
 	struct hlist_node *tmp;
@@ -75,11 +78,13 @@ SYSCALL_DEFINE1(release_psandbox, int, bid)
 		printk(KERN_INFO "there is no psandbox\n");
 		return 0;
 	}
+	write_lock(&competitors_lock);
 	hash_for_each_safe(competitors_map, bkt, tmp, cur, node) {
-			if (cur == task->psandbox) {
+			if (cur->psandbox == task->psandbox) {
 				hash_del(&cur->node);
 			}
 	}
+	write_unlock(&competitors_lock);
 	total_psandbox--;
 
 	list_for_each_entry_safe(pos,temp,&task->psandbox->activity->delay_list,list) {
@@ -112,6 +117,7 @@ SYSCALL_DEFINE0(freeze_psandbox)
 {
 	PSandbox *psandbox = current->psandbox;
 	struct timespec64 current_tm, total_time;
+	struct list_head temp;
 	if (!psandbox) {
 		printk(KERN_INFO "there is no psandbox\n");
 		return 0;
@@ -137,12 +143,12 @@ SYSCALL_DEFINE0(freeze_psandbox)
 			if (psandbox->action_level != HIGHEST_PRIORITY && psandbox->finished_activities > PROBING_NUMBER && psandbox->bad_activities * 100
 				> (psandbox->tail_requirement * psandbox->finished_activities)) {
 				psandbox->action_level = HIGHEST_PRIORITY;
-				printk(KERN_INFO "give a ticket for %lu, bad activity %d, finish activity %d\n", psandbox->bid, psandbox->bad_activities, psandbox->finished_activities);
+//				printk(KERN_INFO "give a ticket for %lu, bad activity %d, finish activity %d\n", psandbox->bid, psandbox->bad_activities, psandbox->finished_activities);
 				psandbox->compensation_ticket = COMPENSATION_TICKET_NUMBER;
 			}
 		}
 	}
-	struct list_head temp = psandbox->activity->delay_list;
+	temp = psandbox->activity->delay_list;
 	memset(psandbox->activity, 0, sizeof(Activity));
 	psandbox->activity->delay_list = temp;
 	return 0;
@@ -152,15 +158,13 @@ SYSCALL_DEFINE2(update_event, BoxEvent __user *, event, int, bid) {
 	struct task_struct *task = find_get_task_by_vpid(bid);
 	int event_type = event->event_type, key = event->key;
 	PSandbox *psandbox = task->psandbox;
-	PSandbox *cur;
+	PSandboxNode *cur;
 	struct hlist_node *tmp;
 
 	if (!task || !task->psandbox || !event) {
 		printk(KERN_INFO "can't find sandbox based on the id\n");
 		return -1;
 	}
-
-
 
 	switch (event_type) {
 	case PREPARE:{
@@ -186,45 +190,42 @@ SYSCALL_DEFINE2(update_event, BoxEvent __user *, event, int, bid) {
 		psandbox->activity->activity_state = ACTIVITY_WAITING;
 
 		//Add to the holder map
-		spin_lock(&competitors_lock);
-		if (competitors_map[hash_min(key, HASH_BITS(competitors_map))].first == NULL) {
-			spin_unlock(&competitors_lock);
-			spin_lock(&competitors_lock);
-			hash_add(competitors_map,&psandbox->node,key);
-			spin_unlock(&competitors_lock);
-		}
-		spin_unlock(&competitors_lock);
-		spin_lock(&competitors_lock);
+		read_lock(&competitors_lock);
 		hash_for_each_possible_safe(competitors_map, cur,tmp, node,key) {
-			if (cur == psandbox) {
+			if (cur->psandbox == psandbox) {
 				is_duplicate = true;
 				break;
 			}
 		}
-		spin_unlock(&competitors_lock);
+		read_unlock(&competitors_lock);
 
 		if (!is_duplicate) {
-			spin_lock(&competitors_lock);
-			hash_add(competitors_map,&psandbox->node,key);
-			spin_unlock(&competitors_lock);
+			PSandboxNode* node;
+			node = (PSandboxNode *)kzalloc(sizeof(PSandboxNode),GFP_KERNEL);
+			node->psandbox = psandbox;
+			write_lock(&competitors_lock);
+			hash_add(competitors_map,&node->node,key);
+			write_unlock(&competitors_lock);
 		}
 		break;
 	}
 	case ENTER: {
 		struct timespec64 current_tm, defer_tm;
+		struct delaying_start *pos;
 		psandbox->activity->activity_state = ACTIVITY_ENTER;
 		//Free the competitors map
-		spin_lock(&competitors_lock);
+		write_lock(&competitors_lock);
 		hash_for_each_possible_safe (competitors_map, cur, tmp, node, key) {
-			if (cur == psandbox) {
+			if (cur->psandbox == psandbox) {
 				hash_del(&cur->node);
+				kfree(cur);
 				break;
 			}
 		}
-		spin_unlock(&competitors_lock);
+		write_unlock(&competitors_lock);
 
 		ktime_get_real_ts64(&current_tm);
-		struct delaying_start *pos;
+
 		list_for_each_entry(pos,&psandbox->activity->delay_list,list) {
 			if (pos->key == key) {
 				defer_tm = timespec64_sub(current_tm,pos->delaying_start);
@@ -241,45 +242,50 @@ SYSCALL_DEFINE2(update_event, BoxEvent __user *, event, int, bid) {
 	case HOLD: {
 		int is_duplicate = false;
 		// Add the holder map
-
-		spin_lock(&holders_lock);
-		if (holders_map[hash_min(key, HASH_BITS(holders_map))].first == NULL) {
-			hash_add(holders_map,&psandbox->node,key);
-		}
-
+		read_lock(&holders_lock);
 		hash_for_each_possible_safe(holders_map, cur,tmp, node,key) {
-			if (cur == psandbox) {
+			if (cur->psandbox == psandbox) {
 				is_duplicate = true;
 				break;
 			}
 		}
-		spin_unlock(&holders_lock);
-		if (!is_duplicate) {
-			spin_lock(&holders_lock);
-			hash_add(holders_map,&psandbox->node,key);
-			spin_unlock(&holders_lock);
-		}
+		read_unlock(&holders_lock);
 
+		if (!is_duplicate) {
+			PSandboxNode* node;
+			node = (PSandboxNode *)kzalloc(sizeof(PSandboxNode),GFP_KERNEL);
+			node->psandbox = psandbox;
+			write_lock(&holders_lock);
+			hash_add(holders_map,&node->node,key);
+			write_unlock(&holders_lock);
+		}
+		break;
 	}
 	case UNHOLD: {
-		int is_action = false, is_holder = false;
+		int is_action = false;
 		struct timespec64 current_tm, defer_tm, executing_tm,delaying_tm;
 		ktime_t penalty_ns = 0;
-		struct task_struct *good_task;
+		struct task_struct *good_task = NULL;
+		struct task_struct *bad_task;
+		PSandboxNode *current_psandbox = NULL;
 		psandbox->activity->activity_state = ACTIVITY_EXIT;
-		spin_lock(&holders_lock);
+
+		read_lock(&holders_lock);
 		hash_for_each_possible_safe (holders_map, cur, tmp, node, key) {
-			if (cur == psandbox) {
+			if (cur->psandbox == psandbox) {
+				current_psandbox = cur;
 				hash_del(&cur->node);
-//				printk (KERN_INFO "the psandbox is %d\n", cur->bid);
-				is_holder = true;
 				break;
 			}
 		}
-		spin_unlock(&holders_lock);
-		if(!is_holder)
+		read_unlock(&holders_lock);
+
+		if(current_psandbox) {
+			hash_del(&current_psandbox->node);
 			return 1;
-		spin_lock(&competitors_lock);
+		}
+
+		read_lock(&competitors_lock);
 
 		// calculating the defering time
 		hash_for_each_possible_safe (competitors_map, cur, tmp, node,
@@ -287,10 +293,11 @@ SYSCALL_DEFINE2(update_event, BoxEvent __user *, event, int, bid) {
 			if (psandbox->action_level != LOW_PRIORITY)
 				break;
 
-			if (cur->bid != psandbox->bid) {
-				ktime_get_real_ts64(&current_tm);
+			if (cur->psandbox->bid != psandbox->bid) {
 				struct delaying_start *pos;
-				list_for_each_entry(pos,&cur->activity->delay_list,list) {
+				ktime_get_real_ts64(&current_tm);
+
+				list_for_each_entry(pos,&cur->psandbox->activity->delay_list,list) {
 					if (pos->key == key) {
 						delaying_tm = pos->delaying_start;
 						defer_tm = timespec64_sub(current_tm,pos->delaying_start);
@@ -300,7 +307,7 @@ SYSCALL_DEFINE2(update_event, BoxEvent __user *, event, int, bid) {
 				if(defer_tm.tv_sec == 0 && defer_tm.tv_nsec == 0) {
 					printk (KERN_INFO "cann't find the key for delaying start for psandbox %d\n", psandbox->bid);
 				}
-				executing_tm = timespec64_sub(timespec64_sub(current_tm,cur->activity->execution_start),defer_tm);
+				executing_tm = timespec64_sub(timespec64_sub(current_tm,cur->psandbox->activity->execution_start),defer_tm);
 
 //				printk (KERN_INFO "the executing time is %lu, the defer time is %lu for psandbox %d, current psandbox %d\n",
 //				       timespec64_to_ns(&executing_tm),timespec64_to_ns(&defer_tm), cur->bid, psandbox->bid);
@@ -308,25 +315,25 @@ SYSCALL_DEFINE2(update_event, BoxEvent __user *, event, int, bid) {
 //				printk (KERN_INFO "the delaying start time is %lu\n",timespec64_to_ns(&cur->activity->delaying_start));
 //				printk (KERN_INFO "the state is %d\n",cur->current_task->state);
 				if (timespec64_to_ns(&defer_tm) > timespec64_to_ns(&executing_tm) *
-					cur->delay_ratio * total_psandbox) {
+				cur->psandbox->delay_ratio * total_psandbox) {
 					penalty_ns += timespec64_to_ns(&defer_tm);
-					good_task = find_get_task_by_vpid(cur->bid);
+					good_task = find_get_task_by_vpid(cur->psandbox->bid);
 				}
 
-				if (cur->action_level == HIGHEST_PRIORITY)
+				if (cur->psandbox->action_level == HIGHEST_PRIORITY)
 					is_action = true;
 			}
 		}
-		spin_unlock(&competitors_lock);
+		read_unlock(&competitors_lock);
 		if (is_action) {
 			int penalty_us = 1000000;
 
 			hash_for_each_possible_safe (competitors_map, cur, tmp, node,
 						     key) {
-				if (cur->action_level == LOW_PRIORITY &&
-					cur->bid != psandbox->bid ) {
-					struct task_struct *bad_task = find_get_task_by_vpid(cur->bid);
+				if (cur->psandbox->action_level == LOW_PRIORITY &&
+				cur->psandbox->bid != psandbox->bid ) {
 					unsigned long timeout;
+					bad_task = find_get_task_by_vpid(cur->psandbox->bid);
 					if (!bad_task || !bad_task->psandbox) {
 						printk(KERN_INFO "can't find sandbox based on the id\n");
 						continue;
@@ -335,9 +342,9 @@ SYSCALL_DEFINE2(update_event, BoxEvent __user *, event, int, bid) {
 					psandbox_schedule_timeout(timeout,bad_task);
 				}
 
-				if (cur->action_level == HIGHEST_PRIORITY &&
-					cur->bid != psandbox->bid ) {
-					struct task_struct *good_task = find_get_task_by_vpid(cur->bid);
+				if (cur->psandbox->action_level == HIGHEST_PRIORITY &&
+					cur->psandbox->bid != psandbox->bid ) {
+					good_task = find_get_task_by_vpid(cur->psandbox->bid);
 					if (!good_task || !good_task->psandbox) {
 						printk(KERN_INFO "can't find sandbox based on the id\n");
 						continue;
@@ -349,13 +356,11 @@ SYSCALL_DEFINE2(update_event, BoxEvent __user *, event, int, bid) {
 		}
 
 		if (penalty_ns) {
-
 			__set_current_state(TASK_INTERRUPTIBLE);
-//			if (penalty_ns > 1000000000) {
-//				printk (KERN_INFO "penalize psandbox %d for %lu ns\n",psandbox->bid, penalty_ns);
-//			}
-			if (good_task)
+			if (good_task) {
 				wake_up_process(good_task);
+			}
+
 			if (penalty_ns > 1000000) {
 				penalty_ns = 1000000;
 				schedule_hrtimeout(&penalty_ns, HRTIMER_MODE_REL);
@@ -365,6 +370,7 @@ SYSCALL_DEFINE2(update_event, BoxEvent __user *, event, int, bid) {
 
 		}
 
+		break;
 	}
 
 	default:break;
@@ -482,8 +488,8 @@ static int psandbox_init(void)
 	INIT_LIST_HEAD(&white_mutexs);
 	hash_init(competitors_map);
 	hash_init(holders_map);
-	spin_lock_init(&competitors_lock);
-	spin_lock_init(&holders_lock);
+//	spin_lock_init(&competitors_lock);
+//	spin_lock_init(&holders_lock);
 	return 0;
 }
 core_initcall(psandbox_init);

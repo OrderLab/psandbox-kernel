@@ -1694,7 +1694,13 @@ out:
 	if (current->psandbox && flag && current->psandbox->state != BOX_FREEZE && current->psandbox->activity &&
 		current->psandbox->activity->activity_state == ACTIVITY_PREEMPTED && current->psandbox->is_futex) {
 		set_current_state(TASK_INTERRUPTIBLE);
-		schedule_hrtimeout(&defer_tm, HRTIMER_MODE_REL);
+		if (defer_tm > 1000000) {
+			defer_tm = 1000000;
+			schedule_hrtimeout(&defer_tm, HRTIMER_MODE_REL);
+		} else {
+			schedule_hrtimeout(&defer_tm, HRTIMER_MODE_REL);
+		}
+
 	}
 	return ret;
 }
