@@ -14,3 +14,10 @@ Run the mysql case
 ./qemu_login.sh
 
 ```
+
+## Move file
+Copy the software file
+
+```bash
+rsync -rcnv --exclude=file yigonghu@192.168.122.1:/home/yigonghu/research/perfIsolation/software/isolation_mysql/5.6.22/ /home/psandbox/software/mysql/5.6.22/
+```
