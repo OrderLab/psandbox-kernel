@@ -18,9 +18,9 @@ QEMU="qemu-system-x86_64"
 #sudo LIBGUESTFS_HV=./guest-images/qemu.wrapper virt-copy-in -a images/psandbox.img ../psandbox-userlib/cmake-build-debug/mutex /home/psandbox/
 sudo LIBGUESTFS_HV=./guest-images/qemu.wrapper virt-copy-in -a images/psandbox.img launch.sh guest-images/.bash_login /home/psandbox/
 sudo LIBGUESTFS_HV=./guest-images/qemu.wrapper virt-copy-in -a images/psandbox.img ../psandbox-userlib/build/libs/libpsandbox.so  /home/psandbox/software/psandbox-userlib/build/libs
-sudo LIBGUESTFS_HV=./guest-images/qemu.wrapper virt-copy-in -a images/psandbox.img my.cnf  /home/psandbox/software/mysql/dist/
+#sudo LIBGUESTFS_HV=./guest-images/qemu.wrapper virt-copy-in -a images/psandbox.img my.cnf  /home/psandbox/software/mysql/dist/
 sleep 1
-LD_PRELOAD="../psandbox-userlib/cmake-build-debug/libpsandbox.so" $QEMU -kernel $QEMU_KERNEL  -hda $IMAGE_PATH \
+LD_PRELOAD="../psandbox-userlib/cmake-build-debug/libpsandbox.so" $QEMU -kernel $QEMU_KERNEL -hda $IMAGE_PATH \
       -append "root=/dev/sda  console=ttyS0"\
-      -k en-us $GRAPHICS -m $QEMU_MEMORY $QEMU_EXTRA_FLAGS\
+      -k en-us $GRAPHICS -m $QEMU_MEMORY -smp 4 $QEMU_EXTRA_FLAGS\
       -enable-kvm 

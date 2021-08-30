@@ -200,6 +200,7 @@ SYSCALL_DEFINE2(update_event, BoxEvent __user *, event, int, bid) {
 		read_unlock(&competitors_lock);
 
 		if (!is_duplicate) {
+			//TODO: to optimize the performance
 			PSandboxNode* node;
 			node = (PSandboxNode *)kzalloc(sizeof(PSandboxNode),GFP_KERNEL);
 			node->psandbox = psandbox;

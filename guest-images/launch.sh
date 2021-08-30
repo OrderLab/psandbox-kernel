@@ -11,7 +11,7 @@ install_x86() {
     fi
     # install required lib for psandbox
     sleep 2
-    sudo apt -y install wget git cmake vim bison build-essential default-libmysqlclient-dev libaio-dev libmariadb-dev libncurses-dev libssl-dev pkg-config liblua5.3-dev
+    sudo apt -y install wget git cmake vim rsync bison build-essential default-libmysqlclient-dev libaio-dev libmariadb-dev libncurses-dev libssl-dev pkg-config liblua5.3-dev
 }
 
 
