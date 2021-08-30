@@ -19,8 +19,11 @@
 
 struct list_head white_mutexs;
 int total_psandbox = 0;
+
+spinlock_t transfers_lock;
 __cacheline_aligned DEFINE_RWLOCK(competitors_lock);
 __cacheline_aligned DEFINE_RWLOCK(holders_lock);
+
 
 #define COMPENSATION_TICKET_NUMBER	1000L
 #define PROBING_NUMBER 100
@@ -30,8 +33,14 @@ typedef struct psandbox_node {
 	struct hlist_node node;
 }PSandboxNode;
 
+typedef struct transfer_node {
+	PSandbox *psandbox;
+	struct hlist_node node;
+}Transfer;
+
 DECLARE_HASHTABLE(competitors_map, 10);
 DECLARE_HASHTABLE(holders_map, 10);
+DECLARE_HASHTABLE(transfers_map, 10);
 
 /* This function will create a psandbox and bind to the current thread */
 SYSCALL_DEFINE0(create_psandbox)
@@ -297,6 +306,10 @@ SYSCALL_DEFINE2(update_event, BoxEvent __user *, event, int, bid) {
 			if (cur->psandbox->bid != psandbox->bid) {
 				struct delaying_start *pos;
 				ktime_get_real_ts64(&current_tm);
+				defer_tm = timespec64_sub(current_tm,psandbox->activity->delaying_start);
+				executing_tm = timespec64_sub(
+					timespec64_sub(timespec64_sub(current_tm,psandbox->activity->execution_start),defer_tm),
+					psandbox->activity->unbind_time);
 
 				list_for_each_entry(pos,&cur->psandbox->activity->delay_list,list) {
 					if (pos->key == key) {
@@ -484,13 +497,70 @@ SYSCALL_DEFINE1(start_manager, u32 __user *, uaddr) {
 	return 0;
 }
 
+SYSCALL_DEFINE1(unbind_psandbox, u64, addr)
+{
+	PSandbox *psandbox = current->psandbox;
+	if (!psandbox) {
+		printk(KERN_INFO "there is no psandbox\n");
+		return 0;
+	}
+	// psandbox->state = BOX_UNBIND; ??
+
+	current->psandbox = NULL;
+	psandbox->bid = -1;
+	psandbox->current_task = NULL;
+	psandbox->task_key = addr;
+	ktime_get_real_ts64(&psandbox->activity->last_unbind_start);
+
+	Transfer* a;
+	a = (Transfer *)kzalloc(sizeof(Transfer),GFP_KERNEL);
+	a->psandbox = psandbox;
+	spin_lock(&transfers_lock);
+	hash_add(transfers_map,&a->node,addr);
+	spin_unlock(&transfers_lock);
+	return 0;
+}
+
+
+SYSCALL_DEFINE1(bind_psandbox, u64, addr)
+{
+	PSandbox *psandbox;
+	Transfer *cur;
+	struct hlist_node *tmp;
+	struct timespec64 current_tm, unbind_tm;
+
+	spin_lock(&transfers_lock);
+	hash_for_each_possible_safe (transfers_map, cur, tmp, node, addr) {
+		if (cur->psandbox->task_key == addr) {
+			psandbox = cur->psandbox;
+			hash_del(&cur->node);
+			kfree(cur);
+		}
+	}
+	spin_unlock(&transfers_lock);
+	if (!psandbox)
+		return -1;
+
+	current->psandbox = psandbox;
+	psandbox->bid = current->pid;
+	psandbox->current_task = current;
+
+	ktime_get_real_ts64(&current_tm);
+	unbind_tm =
+		timespec64_sub(current_tm, psandbox->activity->last_unbind_start);
+	current_tm = psandbox->activity->unbind_time;
+	psandbox->activity->unbind_time = timespec64_add(unbind_tm, current_tm);
+	return psandbox->bid;
+}
+
 static int psandbox_init(void)
 {
 	INIT_LIST_HEAD(&white_mutexs);
 	hash_init(competitors_map);
 	hash_init(holders_map);
-//	spin_lock_init(&competitors_lock);
-//	spin_lock_init(&holders_lock);
+	hash_init(transfers_map);
+	spin_lock_init(&transfers_lock);
+
 	return 0;
 }
 core_initcall(psandbox_init);

@@ -47,13 +47,14 @@ define BASE_LINUX_IMAGES_BUILD
 	mkfs.ext2 $(OUTDIR)/psandbox.img
 	cd $(OUTDIR) && mkdir -p qemu-mount.dir
 	sudo mount -o loop  $(OUTDIR)/psandbox.img $(OUTDIR)/qemu-mount.dir/
-	sudo debootstrap --arch amd64  buster $(OUTDIR)/qemu-mount.dir 
+	sudo debootstrap --arch amd64  buster $(OUTDIR)/qemu-mount.dir
+
 	echo 'root:root' | sudo chroot $(OUTDIR)/qemu-mount.dir chpasswd
-	echo 'adduser psandbox' | sudo chroot $(OUTDIR)/qemu-mount.dir
-	echo "passwd -d root" | sudo chroot $(OUTDIR)/qemu-mount.dir
-	echo "passwd -d psandbox" | sudo chroot $(OUTDIR)/qemu-mount.dir
-	echo "apt install sudo" | sudo chroot $(OUTDIR)/qemu-mount.dir
-	echo "usermod -aG sudo psandbox" | sudo chroot $(OUTDIR)/qemu-mount.dir
+	echo 'adduser psandbox' | sudo chroot $(OUTDIR)/qemu-mount.dir /bin/bash
+	echo "passwd -d root" | sudo chroot $(OUTDIR)/qemu-mount.dir /bin/bash
+	echo "passwd -d psandbox" | sudo chroot $(OUTDIR)/qemu-mount.dir /bin/bash
+	echo "apt install sudo" | sudo chroot $(OUTDIR)/qemu-mount.dir /bin/bash
+	echo "usermod -aG sudo psandbox" | sudo chroot $(OUTDIR)/qemu-mount.dir /bin/bash
 	sudo umount $(OUTDIR)/qemu-mount.dir
 	
 	$(call INFO_MSG, Installing payload...)
