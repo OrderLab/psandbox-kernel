@@ -64,7 +64,7 @@ typedef struct white_list {
 }WhiteList;
 
 typedef struct psandbox_info {
-	int bid;
+	long int bid;
 	struct task_struct *current_task;
 	enum enum_psandbox_state state;
 	int delay_ratio;

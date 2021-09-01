@@ -18,7 +18,8 @@
 #include <linux/hashtable.h>
 
 struct list_head white_mutexs;
-int total_psandbox = 0;
+long int psandbox_id = 1;
+long int live_psandbox = 0;
 
 spinlock_t transfers_lock;
 __cacheline_aligned DEFINE_RWLOCK(competitors_lock);
@@ -50,7 +51,7 @@ SYSCALL_DEFINE0(create_psandbox)
 	if (!psandbox) {
 		return -1;
 	}
-	psandbox->bid = current->pid;
+	psandbox->bid = psandbox_id;
 	psandbox->current_task = current;
 	psandbox->activity = (Activity *)kzalloc(sizeof(Activity), GFP_KERNEL);
 	psandbox->state = BOX_START;
@@ -65,26 +66,27 @@ SYSCALL_DEFINE0(create_psandbox)
 	psandbox->tail_requirement = 90;
 	psandbox->bad_activities = 0;
 	INIT_LIST_HEAD(&psandbox->activity->delay_list);
-	total_psandbox++;
+	psandbox_id++;
+	live_psandbox++;
 
-	printk(KERN_INFO "psandbox syscall called psandbox_create id =%d\n",
-	       current->pid);
-	return psandbox->current_task->pid;
+	printk(KERN_INFO "psandbox syscall called psandbox_create id =%ld\n",
+	       psandbox->bid);
+	return psandbox->bid;
 }
 
-SYSCALL_DEFINE1(release_psandbox, int, bid)
+SYSCALL_DEFINE1(release_psandbox, int, pid)
 {
 	PSandboxNode *cur;
 	struct delaying_start *pos,*temp;
 	unsigned bkt;
 	struct hlist_node *tmp;
-	struct task_struct *task = find_get_task_by_vpid(bid);
+	struct task_struct *task = find_get_task_by_vpid(pid);
 	if (!task) {
 		printk(KERN_INFO "can't find sandbox based on the id\n");
 		return -1;
 	}
 	if (!task->psandbox) {
-		printk(KERN_INFO "there is no psandbox\n");
+		printk(KERN_INFO "there is no psandbox in task\n");
 		return 0;
 	}
 	write_lock(&competitors_lock);
@@ -94,7 +96,7 @@ SYSCALL_DEFINE1(release_psandbox, int, bid)
 			}
 	}
 	write_unlock(&competitors_lock);
-	total_psandbox--;
+	live_psandbox--;
 
 	list_for_each_entry_safe(pos,temp,&task->psandbox->activity->delay_list,list) {
 		kfree(pos);
@@ -104,7 +106,7 @@ SYSCALL_DEFINE1(release_psandbox, int, bid)
 
 
 	printk(KERN_INFO "psandbox syscall called psandbox_release id =%d\n",
-	       current->pid);
+	       pid);
 
 	return 0;
 }
@@ -143,8 +145,8 @@ SYSCALL_DEFINE0(freeze_psandbox)
 	total_time = timespec64_sub(current_tm,psandbox->activity->execution_start);
 //	printk(KERN_INFO "the defer time is %lu ns, psandbox %d\n", timespec64_to_ktime(psandbox->activity->defer_time), psandbox->bid);
 	psandbox->activity->execution_time = timespec64_sub(total_time,psandbox->activity->defer_time);
-	if (total_psandbox)  {
-		if(timespec64_to_ns(&psandbox->activity->execution_time) * psandbox->delay_ratio * total_psandbox
+	if (live_psandbox)  {
+		if(timespec64_to_ns(&psandbox->activity->execution_time) * psandbox->delay_ratio * live_psandbox
 		        <  timespec64_to_ns(&psandbox->activity->defer_time)) {
 			psandbox->bad_activities++;
 			if (psandbox->action_level == LOW_PRIORITY)
@@ -158,13 +160,13 @@ SYSCALL_DEFINE0(freeze_psandbox)
 		}
 	}
 	temp = psandbox->activity->delay_list;
-	memset(psandbox->activity, 0, sizeof(Activity));
+//	memset(psandbox->activity, 0, sizeof(Activity));
 	psandbox->activity->delay_list = temp;
 	return 0;
 }
 
-SYSCALL_DEFINE2(update_event, BoxEvent __user *, event, int, bid) {
-	struct task_struct *task = find_get_task_by_vpid(bid);
+SYSCALL_DEFINE2(update_event, BoxEvent __user *, event, int, pid) {
+	struct task_struct *task = find_get_task_by_vpid(pid);
 	int event_type = event->event_type, key = event->key;
 	PSandbox *psandbox = task->psandbox;
 	PSandboxNode *cur;
@@ -243,7 +245,7 @@ SYSCALL_DEFINE2(update_event, BoxEvent __user *, event, int, bid) {
 			}
 		}
 		if(defer_tm.tv_sec == 0 && defer_tm.tv_nsec == 0) {
-			printk (KERN_INFO "can't find the key for delaying start for psandbox %d\n", psandbox->bid);
+			printk (KERN_INFO "can't find the key for delaying start for psandbox %ld\n", psandbox->bid);
 		}
 		current_tm = psandbox->activity->defer_time;
 		psandbox->activity->defer_time = timespec64_add(defer_tm, current_tm);
@@ -306,10 +308,7 @@ SYSCALL_DEFINE2(update_event, BoxEvent __user *, event, int, bid) {
 			if (cur->psandbox->bid != psandbox->bid) {
 				struct delaying_start *pos;
 				ktime_get_real_ts64(&current_tm);
-				defer_tm = timespec64_sub(current_tm,psandbox->activity->delaying_start);
-				executing_tm = timespec64_sub(
-					timespec64_sub(timespec64_sub(current_tm,psandbox->activity->execution_start),defer_tm),
-					psandbox->activity->unbind_time);
+
 
 				list_for_each_entry(pos,&cur->psandbox->activity->delay_list,list) {
 					if (pos->key == key) {
@@ -318,8 +317,13 @@ SYSCALL_DEFINE2(update_event, BoxEvent __user *, event, int, bid) {
 						break;
 					}
 				}
+				executing_tm = timespec64_sub(
+					timespec64_sub(timespec64_sub(current_tm,psandbox->activity->execution_start),defer_tm),
+					psandbox->activity->unbind_time);
+
+
 				if(defer_tm.tv_sec == 0 && defer_tm.tv_nsec == 0) {
-					printk (KERN_INFO "cann't find the key for delaying start for psandbox %d\n", psandbox->bid);
+					printk (KERN_INFO "cann't find the key for delaying start for psandbox %ld\n", psandbox->bid);
 				}
 				executing_tm = timespec64_sub(timespec64_sub(current_tm,cur->psandbox->activity->execution_start),defer_tm);
 
@@ -329,7 +333,7 @@ SYSCALL_DEFINE2(update_event, BoxEvent __user *, event, int, bid) {
 //				printk (KERN_INFO "the delaying start time is %lu\n",timespec64_to_ns(&cur->activity->delaying_start));
 //				printk (KERN_INFO "the state is %d\n",cur->current_task->state);
 				if (timespec64_to_ns(&defer_tm) > timespec64_to_ns(&executing_tm) *
-				cur->psandbox->delay_ratio * total_psandbox) {
+				cur->psandbox->delay_ratio * live_psandbox) {
 					penalty_ns += timespec64_to_ns(&defer_tm);
 					good_task = find_get_task_by_vpid(cur->psandbox->bid);
 				}
@@ -392,8 +396,9 @@ SYSCALL_DEFINE2(update_event, BoxEvent __user *, event, int, bid) {
 	return 0;
 }
 
-SYSCALL_DEFINE3(compensate_psandbox,int, noisy_bid,int, victim_bid, int, penalty_us){
-	struct task_struct *task = find_get_task_by_vpid(noisy_bid);
+SYSCALL_DEFINE3(compensate_psandbox,int, noisy_pid,int, victim_pid, int, penalty_us)
+{
+	struct task_struct *task = find_get_task_by_vpid(noisy_pid);
 	unsigned long timeout;
 	if (!task || !task->psandbox) {
 		printk(KERN_INFO "can't find sandbox based on the id\n");
@@ -414,10 +419,11 @@ SYSCALL_DEFINE3(compensate_psandbox,int, noisy_bid,int, victim_bid, int, penalty
 		psandbox_schedule_timeout(timeout,task);
 	}
 
-	task = find_get_task_by_vpid(victim_bid);
+	task = find_get_task_by_vpid(victim_pid);
 
 	if (!task || !task->psandbox || !task->psandbox->activity) {
-		printk(KERN_INFO "can't find sandbox based on the id %d\n",victim_bid);
+		printk(KERN_INFO "can't find sandbox based on the id %d\n",
+		       victim_pid);
 		return -1;
 	}
 //	printk(KERN_INFO
@@ -428,13 +434,13 @@ SYSCALL_DEFINE3(compensate_psandbox,int, noisy_bid,int, victim_bid, int, penalty
 	return 1;
 }
 
-SYSCALL_DEFINE1(wakeup_psandbox, int, bid)
+SYSCALL_DEFINE1(wakeup_psandbox, int, pid)
 {
-	struct task_struct *task = find_get_task_by_vpid(bid);
+	struct task_struct *task = find_get_task_by_vpid(pid);
 //	PSandbox *psandbox;
 
 	if (!task || !task->psandbox || !task->psandbox->activity) {
-		printk(KERN_INFO "can't find sandbox based on the id %d\n",bid);
+		printk(KERN_INFO "can't find sandbox based on the id %d\n",pid);
 		return -1;
 	}
 //	printk(KERN_INFO
@@ -445,15 +451,15 @@ SYSCALL_DEFINE1(wakeup_psandbox, int, bid)
 	return 0;
 }
 
-SYSCALL_DEFINE2(penalize_psandbox, int, bid, int, penalty_us)
+SYSCALL_DEFINE2(penalize_psandbox, int, pid, int, penalty_us)
 {
 	ktime_t penalty = penalty_us * 1000;
 
-	if(bid == current->pid) {
+	if(pid == current->pid) {
 		set_current_state(TASK_INTERRUPTIBLE);
 		schedule_hrtimeout(&penalty, HRTIMER_MODE_REL);
 	} else {
-		struct task_struct *task = find_get_task_by_vpid(bid);
+		struct task_struct *task = find_get_task_by_vpid(pid);
 		unsigned long timeout;
 		if (!task || !task->psandbox) {
 			printk(KERN_INFO "can't find sandbox based on the id\n");
@@ -500,31 +506,30 @@ SYSCALL_DEFINE1(start_manager, u32 __user *, uaddr) {
 SYSCALL_DEFINE1(unbind_psandbox, u64, addr)
 {
 	PSandbox *psandbox = current->psandbox;
-	if (!psandbox) {
-		printk(KERN_INFO "there is no psandbox\n");
-		return 0;
-	}
-	// psandbox->state = BOX_UNBIND; ??
+	Transfer* a;
 
+	if (!psandbox) {
+		printk(KERN_INFO "can't find psandbox to unbind\n");
+		return -1;
+	}
 	current->psandbox = NULL;
 	psandbox->bid = -1;
 	psandbox->current_task = NULL;
 	psandbox->task_key = addr;
 	ktime_get_real_ts64(&psandbox->activity->last_unbind_start);
 
-	Transfer* a;
+
 	a = (Transfer *)kzalloc(sizeof(Transfer),GFP_KERNEL);
 	a->psandbox = psandbox;
 	spin_lock(&transfers_lock);
 	hash_add(transfers_map,&a->node,addr);
 	spin_unlock(&transfers_lock);
-	return 0;
+	return psandbox->bid;
 }
-
 
 SYSCALL_DEFINE1(bind_psandbox, u64, addr)
 {
-	PSandbox *psandbox;
+	PSandbox *psandbox = NULL;
 	Transfer *cur;
 	struct hlist_node *tmp;
 	struct timespec64 current_tm, unbind_tm;
@@ -542,7 +547,6 @@ SYSCALL_DEFINE1(bind_psandbox, u64, addr)
 		return -1;
 
 	current->psandbox = psandbox;
-	psandbox->bid = current->pid;
 	psandbox->current_task = current;
 
 	ktime_get_real_ts64(&current_tm);
