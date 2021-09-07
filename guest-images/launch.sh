@@ -81,8 +81,8 @@ install_apt_packages() {
 
 sudo apt update
 install_x86
-install_mysql
-install_sysbench
+#install_mysql
+#install_sysbench
 #install_kernel
 sleep 10
 # QEMU will stop (-no-reboot)

@@ -85,6 +85,6 @@ typedef struct psandbox_info {
 	int is_futex;
 } PSandbox;
 
-void clean_psandbox(struct task_struct *task);
+void clean_psandbox(PSandbox *psandbox);
 void clean_unbind_psandbox(struct task_struct *task);
 #endif //LINUX_5_4_PSANDBOX_H

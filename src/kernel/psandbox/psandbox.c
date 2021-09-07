@@ -80,7 +80,7 @@ SYSCALL_DEFINE0(create_psandbox)
 	return psandbox->bid;
 }
 
-void clean_psandbox(struct task_struct *task) {
+void clean_psandbox(PSandbox *psandbox) {
 	unsigned bkt;
 	struct hlist_node *tmp;
 	PSandboxNode *cur;
@@ -88,7 +88,7 @@ void clean_psandbox(struct task_struct *task) {
 
 	write_lock(&competitors_lock);
 	hash_for_each_safe(competitors_map, bkt, tmp, cur, node) {
-		if (cur->psandbox == task->psandbox) {
+		if (cur->psandbox == psandbox) {
 			hash_del(&cur->node);
 			kfree(cur);
 		}
@@ -96,7 +96,7 @@ void clean_psandbox(struct task_struct *task) {
 	write_unlock(&competitors_lock);
 	write_lock(&holders_lock);
 	hash_for_each_safe(holders_map, bkt, tmp, cur, node) {
-		if (cur->psandbox == task->psandbox) {
+		if (cur->psandbox == psandbox) {
 			hash_del(&cur->node);
 			kfree(cur);
 		}
@@ -104,20 +104,20 @@ void clean_psandbox(struct task_struct *task) {
 	write_unlock(&holders_lock);
 	write_lock(&transfers_lock);
 	hash_for_each_safe(transfers_map, bkt, tmp, cur, node) {
-		if (cur->psandbox == task->psandbox) {
+		if (cur->psandbox == psandbox) {
 			hash_del(&cur->node);
 			kfree(cur);
 		}
 	}
 	write_unlock(&transfers_lock);
-
 	live_psandbox--;
 
-	list_for_each_entry_safe(pos,temp,&task->psandbox->activity->delay_list,list) {
+	list_for_each_entry_safe(pos,temp,&psandbox->activity->delay_list,list) {
 		kfree(pos);
 	}
-	kfree(task->psandbox->activity);
-	kfree(task->psandbox);
+	kfree(psandbox->activity);
+	kfree(psandbox);
+
 }
 
 SYSCALL_DEFINE1(release_psandbox, int, bid)
@@ -131,7 +131,10 @@ SYSCALL_DEFINE1(release_psandbox, int, bid)
 		printk(KERN_INFO "there is no psandbox in task %d\n", task->pid);
 		return 0;
 	}
-	clean_psandbox(task);
+	clean_psandbox(task->psandbox);
+	current->psandbox = NULL;
+	current->is_psandbox=0;
+
 	printk(KERN_INFO "psandbox syscall called psandbox_release id =%d\n",
 	       bid);
 
@@ -147,7 +150,11 @@ void clean_unbind_psandbox(struct task_struct *task) {
 	hash_for_each_safe(transfers_map, bkt, tmp, cur, node) {
 		if (cur->psandbox->creator_psandbox->pid == task->pid) {
 			hash_del(&cur->node);
+			write_unlock(&transfers_lock);
+			clean_psandbox(cur->psandbox);
+			write_lock(&transfers_lock);
 			kfree(cur);
+
 		}
 	}
 	write_unlock(&transfers_lock);
@@ -527,13 +534,33 @@ SYSCALL_DEFINE2(penalize_psandbox, int, pid, int, penalty_us)
 	return 1;
 }
 
-SYSCALL_DEFINE0(get_psandbox)
+SYSCALL_DEFINE0(get_current_psandbox)
 {
 	if (!current->psandbox) {
 //		printk(KERN_INFO "there is no psandbox in current thread\n");
 		return -1;
 	}
 	return current->psandbox->bid;
+}
+
+SYSCALL_DEFINE1(get_psandbox, int, bid)
+{
+	PSandbox *psandbox = NULL;
+	Transfer *cur;
+	struct hlist_node *tmp;
+	read_lock(&transfers_lock);
+	hash_for_each_possible_safe (transfers_map, cur, tmp, node, bid) {
+		if (cur->psandbox->task_key == bid) {
+			psandbox = cur->psandbox;
+			break;
+		}
+	}
+	read_unlock(&transfers_lock);
+	if (!psandbox) {
+		printk(KERN_INFO "can't find psandbox for id %d\n", bid);
+		return -1;
+	}
+	return psandbox->bid;
 }
 
 SYSCALL_DEFINE1(start_manager, u32 __user *, uaddr) {
@@ -566,7 +593,7 @@ SYSCALL_DEFINE1(unbind_psandbox, u64, addr)
 	write_lock(&transfers_lock);
 	hash_add(transfers_map,&a->node,addr);
 	write_unlock(&transfers_lock);
-//	printk(KERN_INFO "unbind psandbox %d\n", psandbox->bid);
+	printk(KERN_INFO "unbind psandbox %d\n", psandbox->bid);
 	return psandbox->bid;
 }
 
@@ -580,7 +607,6 @@ SYSCALL_DEFINE1(bind_psandbox, u64, addr)
 	write_lock(&transfers_lock);
 	hash_for_each_possible_safe (transfers_map, cur, tmp, node, addr) {
 		if (cur->psandbox->task_key == addr) {
-			pr_info("find psandbox %d for bind\n",cur->psandbox->bid);
 			psandbox = cur->psandbox;
 			hash_del(&cur->node);
 			kfree(cur);
@@ -602,7 +628,7 @@ SYSCALL_DEFINE1(bind_psandbox, u64, addr)
 		timespec64_sub(current_tm, psandbox->activity->last_unbind_start);
 	current_tm = psandbox->activity->unbind_time;
 	psandbox->activity->unbind_time = timespec64_add(unbind_tm, current_tm);
-//	printk(KERN_INFO "bind the psandbox %d (find by id %d) to thread %d\n",psandbox->bid,addr,current->pid);
+	printk(KERN_INFO "bind the psandbox %d (find by id %d) to thread %d\n",psandbox->bid,addr,current->pid);
 	return psandbox->bid;
 }
 

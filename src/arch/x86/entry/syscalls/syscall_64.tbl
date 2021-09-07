@@ -361,10 +361,8 @@
 # psandbox syscalls
 436	common	create_psandbox		__x64_sys_create_psandbox
 437	common	release_psandbox	__x64_sys_release_psandbox
-438	common	get_psandbox		__x64_sys_get_psandbox
-439	common	wakeup_psandbox		__x64_sys_wakeup_psandbox
-440	common	penalize_psandbox	__x64_sys_penalize_psandbox
-441	common	compensate_psandbox	__x64_sys_compensate_psandbox
+438	common	get_current_psandbox	__x64_sys_get_current_psandbox
+439	common	get_psandbox		__x64_sys_get_psandbox
 442	common  start_manager		__x64_sys_start_manager
 443	common	active_psandbox		__x64_sys_active_psandbox
 444	common	freeze_psandbox		__x64_sys_freeze_psandbox
