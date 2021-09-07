@@ -1,5 +1,8 @@
-#!/bin/sh
+stty rows 42
+stty columns 120
 
+tput init
+source ~/.bashrc
 sudo chown -R psandbox /home/psandbox
 chmod +x ./launch.sh
 ./launch.sh

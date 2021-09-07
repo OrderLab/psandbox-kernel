@@ -68,6 +68,8 @@
 #include <asm/unistd.h>
 #include <asm/pgtable.h>
 #include <asm/mmu_context.h>
+/* Psandbox changes */
+#include <linux/psandbox/psandbox.h>
 
 static void __unhash_process(struct task_struct *p, bool group_dead)
 {
@@ -684,6 +686,7 @@ static void exit_notify(struct task_struct *tsk, int group_dead)
 
 	list_for_each_entry_safe(p, n, &dead, ptrace_entry) {
 		list_del_init(&p->ptrace_entry);
+
 		release_task(p);
 	}
 }
@@ -739,7 +742,14 @@ void __noreturn do_exit(long code)
 	ptrace_event(PTRACE_EVENT_EXIT, code);
 
 	validate_creds_for_do_exit(tsk);
-
+	//Psandbox change
+	if (tsk->is_psandbox) {
+		pr_info("psandbox: signal to clean up the psandbox for thread %d\n", tsk->pid);
+		clean_psandbox(tsk);
+	} else if (tsk->is_creator) {
+		pr_info("psandbox: signal to clean up the unbind psandbox for thread %d\n", tsk->pid);
+		clean_unbind_psandbox(tsk);
+	}
 	/*
 	 * We're taking recursive faults here in do_exit. Safest is to just
 	 * leave this task alone and wait for reboot.

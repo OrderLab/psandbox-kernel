@@ -1278,6 +1278,8 @@ struct task_struct {
 	/*Psandbox change*/
 
 	PSandbox* psandbox;
+	bool is_psandbox;
+	bool is_creator;
 	/* CPU-specific state of this task: */
 	struct thread_struct		thread;
 

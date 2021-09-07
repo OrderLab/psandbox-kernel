@@ -66,6 +66,7 @@ typedef struct white_list {
 typedef struct psandbox_info {
 	long int bid;
 	struct task_struct *current_task;
+	struct task_struct *creator_psandbox;
 	enum enum_psandbox_state state;
 	int delay_ratio;
 	int tail_requirement;
@@ -77,11 +78,13 @@ typedef struct psandbox_info {
 	struct list_head *white_list;
 	int is_white;
 	struct hlist_node node;
-
 	size_t task_key;
+
 
 	// Debug
 	int is_futex;
 } PSandbox;
 
+void clean_psandbox(struct task_struct *task);
+void clean_unbind_psandbox(struct task_struct *task);
 #endif //LINUX_5_4_PSANDBOX_H
