@@ -63,7 +63,13 @@ typedef struct white_list {
 	struct list_head list;
 }WhiteList;
 
-typedef struct psandbox_info {
+typedef struct psandbox_info PSandbox;
+typedef struct transfer_node {
+	PSandbox *psandbox;
+	struct hlist_node node;
+}Transfer;
+
+struct psandbox_info {
 	long int bid;
 	struct task_struct *current_task;
 	struct task_struct *creator_psandbox;
@@ -79,12 +85,16 @@ typedef struct psandbox_info {
 	int is_white;
 	struct hlist_node node;
 	size_t task_key;
-
-
+	struct list_head list;
+	Transfer transfers[10];
 	// Debug
 	int is_futex;
-} PSandbox;
+};
+
+
+
 
 void clean_psandbox(PSandbox *psandbox);
 void clean_unbind_psandbox(struct task_struct *task);
+PSandbox *get_psandbox(int bid);
 #endif //LINUX_5_4_PSANDBOX_H
