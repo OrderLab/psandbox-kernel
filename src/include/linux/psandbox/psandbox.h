@@ -67,7 +67,7 @@ typedef struct psandbox_info PSandbox;
 typedef struct transfer_node {
 	PSandbox *psandbox;
 	struct hlist_node node;
-}Transfer;
+} PSandboxNode;
 
 struct psandbox_info {
 	long int bid;
@@ -86,7 +86,7 @@ struct psandbox_info {
 	struct hlist_node node;
 	size_t task_key;
 	struct list_head list;
-	Transfer transfers[10];
+	PSandboxNode transfers[10];
 	// Debug
 	int is_futex;
 };

@@ -748,7 +748,8 @@ void __noreturn do_exit(long code)
 		if(tsk->psandbox) {
 			clean_psandbox(tsk->psandbox);
 		}
-	} else if (tsk->is_creator) {
+	}
+	if (tsk->is_creator) {
 //		pr_info("psandbox: signal to clean up the unbind psandbox for thread %d\n", tsk->pid);
 		clean_unbind_psandbox(tsk);
 	}
