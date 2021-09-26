@@ -20,6 +20,10 @@ struct task_struct;
 #define MID_PRIORITY 1
 #define LOW_PRIORITY 0
 
+#define PREALLOCATION_SIZE 10
+#define HOLDER_SIZE 100
+#define COMPETITORS_SIZE 100
+
 enum enum_event_type {
 	PREPARE,
 	ENTER,
@@ -86,7 +90,9 @@ struct psandbox_info {
 	struct hlist_node node;
 	size_t task_key;
 	struct list_head list;
-	PSandboxNode transfers[10];
+	PSandboxNode transfers[PREALLOCATION_SIZE];
+	PSandboxNode holders[HOLDER_SIZE];
+	PSandboxNode competitors[COMPETITORS_SIZE];
 	// Debug
 	int is_futex;
 };

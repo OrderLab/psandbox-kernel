@@ -33,6 +33,7 @@ __cacheline_aligned DEFINE_RWLOCK(psandbox_lock);
 
 
 
+
 DECLARE_HASHTABLE(competitors_map, 10);
 DECLARE_HASHTABLE(holders_map, 10);
 DECLARE_HASHTABLE(transfers_map, 10);
@@ -202,8 +203,21 @@ SYSCALL_DEFINE2(update_event, BoxEvent __user *, event, int, pid) {
 		if (!is_duplicate) {
 			//TODO: to optimize the performance
 			PSandboxNode* node;
-			node = (PSandboxNode *)kzalloc(sizeof(PSandboxNode),GFP_KERNEL);
+			int i;
+
+
+			for (i = 0; i< COMPETITORS_SIZE ; ++i) {
+				if (psandbox->competitors[i].psandbox == NULL) {
+					node = psandbox->competitors + i;
+					break;
+				}
+			}
+			if (!node)	{
+				pr_info("call create for competitor\n");
+				node = (PSandboxNode *)kzalloc(sizeof(PSandboxNode),GFP_KERNEL);
+			}
 			node->psandbox = psandbox;
+
 			write_lock(&competitors_lock);
 			hash_add(competitors_map,&node->node,key);
 			write_unlock(&competitors_lock);
@@ -219,7 +233,11 @@ SYSCALL_DEFINE2(update_event, BoxEvent __user *, event, int, pid) {
 		hash_for_each_possible_safe (competitors_map, cur, tmp, node, key) {
 			if (cur->psandbox == psandbox) {
 				hash_del(&cur->node);
-				kfree(cur);
+				if (&psandbox->competitors[0] <= cur && cur < &psandbox->competitors[0] + COMPETITORS_SIZE) {
+					cur->psandbox = NULL;
+				}  else {
+					kfree(cur);
+				}
 				break;
 			}
 		}
@@ -254,7 +272,17 @@ SYSCALL_DEFINE2(update_event, BoxEvent __user *, event, int, pid) {
 
 		if (!is_duplicate) {
 			PSandboxNode* node;
-			node = (PSandboxNode *)kzalloc(sizeof(PSandboxNode),GFP_KERNEL);
+			int i;
+			for (i = 0; i<PREALLOCATION_SIZE ; ++i) {
+				if (psandbox->holders[i].psandbox == NULL) {
+					node = psandbox->holders + i;
+					break;
+				}
+			}
+			if (!node)	{
+				pr_info("call create for holder\n");
+				node = (PSandboxNode *)kzalloc(sizeof(PSandboxNode),GFP_KERNEL);
+			}
 			node->psandbox = psandbox;
 			write_lock(&holders_lock);
 			hash_add(holders_map,&node->node,key);
@@ -278,11 +306,17 @@ SYSCALL_DEFINE2(update_event, BoxEvent __user *, event, int, pid) {
 				hash_del(&cur->node);
 				break;
 			}
+
+
 		}
 		read_unlock(&holders_lock);
 
 		if(current_psandbox) {
-			hash_del(&current_psandbox->node);
+			if (&psandbox->holders[0] <= cur && cur < &psandbox->holders[0] + HOLDER_SIZE) {
+				cur->psandbox = NULL;
+			}  else {
+				kfree(cur);
+			}
 			return 1;
 		}
 
@@ -566,13 +600,14 @@ SYSCALL_DEFINE1(unbind_psandbox, u64, addr)
 #ifdef ENABLE_DEBUG
 	ckpt("beforealloc");
 #endif
-	for (i = 0; i<10; ++i) {
+	for (i = 0; i<PREALLOCATION_SIZE ; ++i) {
 		if (psandbox->transfers[i].psandbox == NULL) {
 			a = psandbox->transfers + i;
 			break;
 		}
 	}
 	if (!a)	{
+		pr_info("call create\n");
 		a = (PSandboxNode *)kzalloc(sizeof(PSandboxNode),GFP_KERNEL);
 	}
 #ifdef ENABLE_DEBUG
@@ -655,7 +690,7 @@ SYSCALL_DEFINE1(bind_psandbox, int, addr)
 		if (cur->psandbox->task_key == addr) {
 			psandbox = cur->psandbox;
 			hash_del(&cur->node);
-			if (&psandbox->transfers[0] <= cur && cur < &psandbox->transfers[0] + 10) {
+			if (&psandbox->transfers[0] <= cur && cur < &psandbox->transfers[0] + PREALLOCATION_SIZE) {
 				cur->psandbox = NULL;
 			}  else {
 				kfree(cur);
@@ -724,7 +759,11 @@ void clean_psandbox(PSandbox *psandbox) {
 	hash_for_each_safe(competitors_map, bkt, tmp, cur, node) {
 		if (cur->psandbox == psandbox) {
 			hash_del(&cur->node);
-			kfree(cur);
+			if (&psandbox->competitors[0] <= cur && cur < &psandbox->competitors[0] + COMPETITORS_SIZE) {
+				cur->psandbox = NULL;
+			}  else {
+				kfree(cur);
+			}
 		}
 	}
 	write_unlock(&competitors_lock);
@@ -732,7 +771,11 @@ void clean_psandbox(PSandbox *psandbox) {
 	hash_for_each_safe(holders_map, bkt, tmp, cur, node) {
 		if (cur->psandbox == psandbox) {
 			hash_del(&cur->node);
-			kfree(cur);
+			if (&psandbox->holders[0] <= cur && cur < &psandbox->holders[0] + HOLDER_SIZE) {
+				cur->psandbox = NULL;
+			}  else {
+				kfree(cur);
+			}
 		}
 	}
 	write_unlock(&holders_lock);
@@ -740,7 +783,7 @@ void clean_psandbox(PSandbox *psandbox) {
 	hash_for_each_safe(transfers_map, bkt, tmp, cur, node) {
 		if (cur->psandbox == psandbox) {
 			hash_del(&cur->node);
-			if (&psandbox->transfers[0] <= cur && cur < &psandbox->transfers[0] + 10) {
+			if (&psandbox->transfers[0] <= cur && cur < &psandbox->transfers[0] + PREALLOCATION_SIZE) {
 				cur->psandbox = NULL;
 			}  else {
 				kfree(cur);
