@@ -66,6 +66,8 @@ SYSCALL_DEFINE0(create_psandbox)
 	psandbox->tail_requirement = 90;
 	psandbox->bad_activities = 0;
 	psandbox->creator_psandbox = current;
+	psandbox->is_lazy = 0;
+	psandbox->addr = 0;
 
 	INIT_LIST_HEAD(&psandbox->activity->delay_list);
 
@@ -80,9 +82,9 @@ SYSCALL_DEFINE0(create_psandbox)
 	return psandbox->bid;
 }
 
-SYSCALL_DEFINE1(release_psandbox, int, bid)
+SYSCALL_DEFINE1(release_psandbox, int, pid)
 {
-	struct task_struct *task = find_get_task_by_vpid(bid);
+	struct task_struct *task = find_get_task_by_vpid(pid);
 	if (!task) {
 		printk(KERN_INFO "can't find sandbox based on the id\n");
 		return -1;
@@ -96,7 +98,7 @@ SYSCALL_DEFINE1(release_psandbox, int, bid)
 	current->is_psandbox=0;
 
 	printk(KERN_INFO "psandbox syscall called psandbox_release id =%d\n",
-	       bid);
+	       pid);
 
 	return 0;
 }
@@ -114,44 +116,18 @@ SYSCALL_DEFINE0(active_psandbox)
 	return 0;
 }
 
+
+
 SYSCALL_DEFINE0(freeze_psandbox)
 {
 	PSandbox *psandbox = current->psandbox;
-	struct timespec64 current_tm, total_time;
-	struct list_head temp;
 	if (!psandbox) {
 		printk(KERN_INFO "there is no psandbox\n");
 		return 0;
 	}
-	if (psandbox->compensation_ticket > 1) {
-		psandbox->compensation_ticket--;
-	} else {
-		psandbox->action_level = LOW_PRIORITY;
-	}
+	do_freeze_psandbox(psandbox);
 
-	psandbox->state = BOX_FREEZE;
-	psandbox->finished_activities++;
-	ktime_get_real_ts64(&current_tm);
-	total_time = timespec64_sub(current_tm,psandbox->activity->execution_start);
-//	printk(KERN_INFO "the defer time is %lu ns, psandbox %d\n", timespec64_to_ktime(psandbox->activity->defer_time), psandbox->bid);
-	psandbox->activity->execution_time = timespec64_sub(total_time,psandbox->activity->defer_time);
-	if (live_psandbox)  {
-		if(timespec64_to_ns(&psandbox->activity->execution_time) * psandbox->delay_ratio * live_psandbox
-		        <  timespec64_to_ns(&psandbox->activity->defer_time)) {
-			psandbox->bad_activities++;
-			if (psandbox->action_level == LOW_PRIORITY)
-				psandbox->action_level = MID_PRIORITY;
-			if (psandbox->action_level != HIGHEST_PRIORITY && psandbox->finished_activities > PROBING_NUMBER && psandbox->bad_activities * 100
-				> (psandbox->tail_requirement * psandbox->finished_activities)) {
-				psandbox->action_level = HIGHEST_PRIORITY;
-//				printk(KERN_INFO "give a ticket for %lu, bad activity %d, finish activity %d\n", psandbox->bid, psandbox->bad_activities, psandbox->finished_activities);
-				psandbox->compensation_ticket = COMPENSATION_TICKET_NUMBER;
-			}
-		}
-	}
-	temp = psandbox->activity->delay_list;
-	memset(psandbox->activity, 0, sizeof(Activity));
-	psandbox->activity->delay_list = temp;
+
 	return 0;
 }
 
@@ -166,6 +142,9 @@ SYSCALL_DEFINE2(update_event, BoxEvent __user *, event, int, pid) {
 		printk(KERN_INFO "can't find sandbox based on the id\n");
 		return -1;
 	}
+
+	if(psandbox->is_lazy == 1)
+		return 0;
 
 	switch (event_type) {
 	case PREPARE:{
@@ -202,7 +181,7 @@ SYSCALL_DEFINE2(update_event, BoxEvent __user *, event, int, pid) {
 
 		if (!is_duplicate) {
 			//TODO: to optimize the performance
-			PSandboxNode* node;
+			PSandboxNode* node = NULL;
 			int i;
 
 
@@ -271,7 +250,7 @@ SYSCALL_DEFINE2(update_event, BoxEvent __user *, event, int, pid) {
 		read_unlock(&holders_lock);
 
 		if (!is_duplicate) {
-			PSandboxNode* node;
+			PSandboxNode* node = NULL;
 			int i;
 			for (i = 0; i<PREALLOCATION_SIZE ; ++i) {
 				if (psandbox->holders[i].psandbox == NULL) {
@@ -513,7 +492,7 @@ SYSCALL_DEFINE0(get_current_psandbox)
 //		printk(KERN_INFO "there is no psandbox in current thread\n");
 		return -1;
 	}
-	return current->psandbox->bid;
+	return current->pid;
 }
 
 SYSCALL_DEFINE1(get_psandbox, int, bid)
@@ -533,7 +512,8 @@ SYSCALL_DEFINE1(get_psandbox, int, bid)
 		printk(KERN_INFO "can't find psandbox for id %d\n", bid);
 		return -1;
 	}
-	return psandbox->bid;
+
+	return psandbox->current_task->pid;
 }
 
 SYSCALL_DEFINE1(start_manager, u32 __user *, uaddr) {
@@ -572,85 +552,15 @@ do {            \
 SYSCALL_DEFINE1(unbind_psandbox, u64, addr)
 {
 	PSandbox *psandbox = current->psandbox;
-	PSandboxNode * a = NULL;
-	int i;
-#ifdef ENABLE_DEBUG
-	static int tcnt = 0;
-	static struct ckpt_t {
-		cycles_t clk;
-		u64 t;
-		const char *name;
-	} ckpts[32] = { { 0, 0, NULL, }, };
 
-	static u64 last_ns = 0;
-	if (CKPT && last_ns == 0)
-		last_ns = ktime_get_ns();
-
-	ckpt("init");
-#endif
 	if (!psandbox) {
 		printk(KERN_INFO "can't find psandbox to unbind\n");
 		return -1;
 	}
-	current->psandbox = NULL;
-	current->is_psandbox = 0;
-	psandbox->current_task = NULL;
-	psandbox->task_key = addr;
+	psandbox->is_lazy = 1;
+	psandbox->addr = addr;
 	ktime_get_real_ts64(&psandbox->activity->last_unbind_start);
-#ifdef ENABLE_DEBUG
-	ckpt("beforealloc");
-#endif
-	for (i = 0; i<PREALLOCATION_SIZE ; ++i) {
-		if (psandbox->transfers[i].psandbox == NULL) {
-			a = psandbox->transfers + i;
-			break;
-		}
-	}
-	if (!a)	{
-		pr_info("call create\n");
-		a = (PSandboxNode *)kzalloc(sizeof(PSandboxNode),GFP_KERNEL);
-	}
-#ifdef ENABLE_DEBUG
-	ckpt("alloc");
-#endif
-	a->psandbox = psandbox;
-	write_lock(&transfers_lock);
-#ifdef ENABLE_DEBUG
-	ckpt("wrlock");
-#endif
-	hash_add(transfers_map,&a->node,addr);
-
-#ifdef ENABLE_DEBUG
-	ckpt("hash add");
-#endif
-	write_unlock(&transfers_lock);
-#ifdef ENABLE_DEBUG
-	ckpt("wrunlock");
-
-	if (CKPT) {
-		int total = __COUNTER__ - COUNTER_BASE - 1;
-		++tcnt;
-
-		if (tcnt % 30000 == 0) {
-
-			u64 new_time = ktime_get_ns();
-			printk("unbind call 100000 times interval %lld ns\n", new_time - last_ns);
-			last_ns = new_time;
-
-			printk("unbind call total %llu ns, %llu cycles\n",
-			       ckpts[total - 1].t / tcnt, ckpts[total - 1].clk / tcnt);
-
-			ckpts[0].t = 0;
-			ckpts[0].clk = 0;
-			for (i = 1; i < total; ++i) {
-				printk("CKPT %20s takes: %10llu ns, %10llu cycles\n",
-				       ckpts[i].name, (ckpts[i].t - ckpts[i - 1].t) / tcnt,
-				       (ckpts[i].clk - ckpts[i - 1].clk) / tcnt);
-			}
-
-		}
-	}
-#endif
+	do_freeze_psandbox(psandbox);
 //	printk(KERN_INFO "unbind psandbox %d\n", psandbox->bid);
 	return psandbox->bid;
 }
@@ -667,6 +577,9 @@ SYSCALL_DEFINE1(bind_psandbox, int, addr)
 	PSandbox *psandbox = NULL;
 	PSandboxNode *cur;
 	struct hlist_node *tmp;
+	PSandboxNode *a = NULL;
+	int i;
+	
 //	struct timespec64 current_tm, unbind_tm;
 #ifdef ENABLE_DEBUG
 	static int tcnt = 0;
@@ -682,10 +595,38 @@ SYSCALL_DEFINE1(bind_psandbox, int, addr)
 
 	ckpt("init");
 #endif
-	write_lock(&transfers_lock);
+
 #ifdef ENABLE_DEBUG
 	ckpt("lock");
 #endif
+
+	if (!current->psandbox) {
+		printk(KERN_INFO "can't find psandbox to bind\n");
+		return -1;
+	}
+	if(current->psandbox->addr == addr) {
+		current->psandbox->is_lazy = 0;
+		current->psandbox->addr = 0;
+		current->psandbox->state = BOX_ACTIVE;
+		ktime_get_real_ts64(&current->psandbox->activity->execution_start);
+		return current->psandbox->bid;
+	}
+
+	for (i = 0; i<PREALLOCATION_SIZE ; ++i) {
+		if (current->psandbox->transfers[i].psandbox == NULL) {
+			a = current->psandbox->transfers + i;
+			break;
+		}
+	}
+	if (!a)	{
+		a = (PSandboxNode *)kzalloc(sizeof(PSandboxNode),GFP_KERNEL);
+	}
+	current->psandbox->current_task = NULL;
+	current->psandbox->task_key = addr;
+	a->psandbox = current->psandbox;
+	write_lock(&transfers_lock);
+	hash_add(transfers_map,&a->node,addr);
+
 	hash_for_each_possible_safe (transfers_map, cur, tmp, node, addr) {
 		if (cur->psandbox->task_key == addr) {
 			psandbox = cur->psandbox;
@@ -712,7 +653,10 @@ SYSCALL_DEFINE1(bind_psandbox, int, addr)
 	current->psandbox = psandbox;
 	current->is_psandbox = 1;
 	psandbox->current_task = current;
-
+	psandbox->is_lazy = 0;
+	psandbox->addr = 0;
+	psandbox->state = BOX_ACTIVE;
+	ktime_get_real_ts64(&psandbox->activity->execution_start);
 //	ktime_get_real_ts64(&current_tm);
 //	unbind_tm =
 //		timespec64_sub(current_tm, psandbox->activity->last_unbind_start);
@@ -747,6 +691,42 @@ SYSCALL_DEFINE1(bind_psandbox, int, addr)
 	}
 #endif
 	return psandbox->bid;
+}
+
+
+void do_freeze_psandbox(PSandbox *psandbox){
+//	struct timespec64 current_tm, total_time;
+//	struct list_head temp;
+
+	if (psandbox->compensation_ticket > 1) {
+		psandbox->compensation_ticket--;
+	} else {
+		psandbox->action_level = LOW_PRIORITY;
+	}
+
+	psandbox->state = BOX_FREEZE;
+	psandbox->finished_activities++;
+	//	ktime_get_real_ts64(&current_tm);
+	//	total_time = timespec64_sub(current_tm,psandbox->activity->execution_start);
+	//	//	printk(KERN_INFO "the defer time is %lu ns, psandbox %d\n", timespec64_to_ktime(psandbox->activity->defer_time), psandbox->bid);
+	//	psandbox->activity->execution_time = timespec64_sub(total_time,psandbox->activity->defer_time);
+	//	if (live_psandbox)  {
+	//		if(timespec64_to_ns(&psandbox->activity->execution_time) * psandbox->delay_ratio * live_psandbox
+	//		<  timespec64_to_ns(&psandbox->activity->defer_time)) {
+	//			psandbox->bad_activities++;
+	//			if (psandbox->action_level == LOW_PRIORITY)
+	//				psandbox->action_level = MID_PRIORITY;
+	//			if (psandbox->action_level != HIGHEST_PRIORITY && psandbox->finished_activities > PROBING_NUMBER && psandbox->bad_activities * 100
+	//			> (psandbox->tail_requirement * psandbox->finished_activities)) {
+	//				psandbox->action_level = HIGHEST_PRIORITY;
+	//				//				printk(KERN_INFO "give a ticket for %lu, bad activity %d, finish activity %d\n", psandbox->bid, psandbox->bad_activities, psandbox->finished_activities);
+	//				psandbox->compensation_ticket = COMPENSATION_TICKET_NUMBER;
+	//			}
+	//		}
+	//	}
+	//	temp = psandbox->activity->delay_list;
+	//	memset(psandbox->activity, 0, sizeof(Activity));
+	//	psandbox->activity->delay_list = temp;
 }
 
 void clean_psandbox(PSandbox *psandbox) {

@@ -93,13 +93,15 @@ struct psandbox_info {
 	PSandboxNode transfers[PREALLOCATION_SIZE];
 	PSandboxNode holders[HOLDER_SIZE];
 	PSandboxNode competitors[COMPETITORS_SIZE];
+	int is_lazy;
+	u64 addr;
 	// Debug
 	int is_futex;
 };
 
 
 
-
+void do_freeze_psandbox(PSandbox *psandbox);
 void clean_psandbox(PSandbox *psandbox);
 void clean_unbind_psandbox(struct task_struct *task);
 PSandbox *get_psandbox(int bid);

@@ -1654,9 +1654,10 @@ futex_wake(u32 __user *uaddr, unsigned int flags, int nr_wake, u32 bitset)
 				psandbox = this->task->psandbox;
 				if (psandbox && psandbox->state != BOX_FREEZE && !psandbox->is_white) {
 					struct timespec64 current_tm;
+					struct delaying_start *pos;
 					psandbox->activity->activity_state = ACTIVITY_ENTER;
 					ktime_get_real_ts64(&current_tm);
-					struct delaying_start *pos;
+
 
 					list_for_each_entry(pos,&psandbox->activity->delay_list,list) {
 						if (pos->key == (u32)uaddr) {
