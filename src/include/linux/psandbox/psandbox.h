@@ -105,4 +105,5 @@ void do_freeze_psandbox(PSandbox *psandbox);
 void clean_psandbox(PSandbox *psandbox);
 void clean_unbind_psandbox(struct task_struct *task);
 PSandbox *get_psandbox(int bid);
+int do_unbind(int addr);
 #endif //LINUX_5_4_PSANDBOX_H

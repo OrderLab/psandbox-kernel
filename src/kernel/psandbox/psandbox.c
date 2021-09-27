@@ -49,6 +49,12 @@ SYSCALL_DEFINE0(create_psandbox)
 	if (!psandbox) {
 		return -1;
 	}
+
+	if(current->psandbox && current->psandbox->is_lazy) {
+		if(do_unbind(0) == -1)
+			return -1;
+	}
+
 	psandbox->bid = psandbox_id;
 	psandbox->current_task = current;
 	psandbox->activity = (Activity *)kzalloc(sizeof(Activity), GFP_KERNEL);
@@ -79,7 +85,7 @@ SYSCALL_DEFINE0(create_psandbox)
 
 	printk(KERN_INFO "psandbox syscall called psandbox_create id =%ld by thread %d\n",
 	       psandbox->bid,current->pid);
-	return psandbox->bid;
+	return current->pid;
 }
 
 SYSCALL_DEFINE1(release_psandbox, int, pid)
@@ -131,14 +137,13 @@ SYSCALL_DEFINE0(freeze_psandbox)
 	return 0;
 }
 
-SYSCALL_DEFINE2(update_event, BoxEvent __user *, event, int, pid) {
-	struct task_struct *task = find_get_task_by_vpid(pid);
+SYSCALL_DEFINE1(update_event, BoxEvent __user *, event) {
 	int event_type = event->event_type, key = event->key;
-	PSandbox *psandbox = task->psandbox;
+	PSandbox *psandbox = current->psandbox;
 	PSandboxNode *cur;
 	struct hlist_node *tmp;
 
-	if (!task || !task->psandbox || !event) {
+	if (!psandbox || !event) {
 		printk(KERN_INFO "can't find sandbox based on the id\n");
 		return -1;
 	}
@@ -180,10 +185,8 @@ SYSCALL_DEFINE2(update_event, BoxEvent __user *, event, int, pid) {
 		read_unlock(&competitors_lock);
 
 		if (!is_duplicate) {
-			//TODO: to optimize the performance
 			PSandboxNode* node = NULL;
 			int i;
-
 
 			for (i = 0; i< COMPETITORS_SIZE ; ++i) {
 				if (psandbox->competitors[i].psandbox == NULL) {
@@ -562,54 +565,23 @@ SYSCALL_DEFINE1(unbind_psandbox, u64, addr)
 	ktime_get_real_ts64(&psandbox->activity->last_unbind_start);
 	do_freeze_psandbox(psandbox);
 //	printk(KERN_INFO "unbind psandbox %d\n", psandbox->bid);
-	return psandbox->bid;
+	return psandbox->current_task->pid;
 }
-#ifdef ENABLE_DEBUG
-#undef COUNTER_BASE
-//enum { COUNTER_BASE = __COUNTER__ };
 
-#undef CKPT
-#define CKPT 1
-#endif
-
-SYSCALL_DEFINE1(bind_psandbox, int, addr)
-{
-	PSandbox *psandbox = NULL;
-	PSandboxNode *cur;
-	struct hlist_node *tmp;
+int do_unbind(int addr){
 	PSandboxNode *a = NULL;
 	int i;
-	
-//	struct timespec64 current_tm, unbind_tm;
-#ifdef ENABLE_DEBUG
-	static int tcnt = 0;
-	static struct ckpt_t {
-		cycles_t clk;
-		u64 t;
-		const char *name;
-	} ckpts[32] = { { 0, 0, NULL, }, };
-
-	static u64 last_ns = 0;
-	if (CKPT && last_ns == 0)
-		last_ns = ktime_get_ns();
-
-	ckpt("init");
-#endif
-
-#ifdef ENABLE_DEBUG
-	ckpt("lock");
-#endif
 
 	if (!current->psandbox) {
 		printk(KERN_INFO "can't find psandbox to bind\n");
 		return -1;
 	}
-	if(current->psandbox->addr == addr) {
+	if(current->psandbox->addr == addr || addr == 0) {
 		current->psandbox->is_lazy = 0;
 		current->psandbox->addr = 0;
 		current->psandbox->state = BOX_ACTIVE;
 		ktime_get_real_ts64(&current->psandbox->activity->execution_start);
-		return current->psandbox->bid;
+		return current->pid;
 	}
 
 	for (i = 0; i<PREALLOCATION_SIZE ; ++i) {
@@ -626,6 +598,41 @@ SYSCALL_DEFINE1(bind_psandbox, int, addr)
 	a->psandbox = current->psandbox;
 	write_lock(&transfers_lock);
 	hash_add(transfers_map,&a->node,addr);
+	return 0;
+}
+#ifdef ENABLE_DEBUG
+#undef COUNTER_BASE
+//enum { COUNTER_BASE = __COUNTER__ };
+
+#undef CKPT
+#define CKPT 1
+#endif
+
+SYSCALL_DEFINE1(bind_psandbox, int, addr)
+{
+	PSandbox *psandbox = NULL;
+	PSandboxNode *cur;
+	struct hlist_node *tmp;
+
+//	struct timespec64 current_tm, unbind_tm;
+#ifdef ENABLE_DEBUG
+	static int tcnt = 0;
+	static struct ckpt_t {
+		cycles_t clk;
+		u64 t;
+		const char *name;
+	} ckpts[32] = { { 0, 0, NULL, }, };
+
+	static u64 last_ns = 0;
+	if (CKPT && last_ns == 0)
+		last_ns = ktime_get_ns();
+
+	ckpt("init");
+#endif
+
+	if(do_unbind(addr) == -1)
+		return -1;
+
 
 	hash_for_each_possible_safe (transfers_map, cur, tmp, node, addr) {
 		if (cur->psandbox->task_key == addr) {
@@ -690,7 +697,7 @@ SYSCALL_DEFINE1(bind_psandbox, int, addr)
 		}
 	}
 #endif
-	return psandbox->bid;
+	return psandbox->current_task->pid;
 }
 
 
