@@ -20,6 +20,10 @@ struct task_struct;
 #define MID_PRIORITY 1
 #define LOW_PRIORITY 0
 
+#define PREALLOCATION_SIZE 10
+#define HOLDER_SIZE 100
+#define COMPETITORS_SIZE 100
+
 enum enum_event_type {
 	PREPARE,
 	ENTER,
@@ -67,7 +71,7 @@ typedef struct psandbox_info PSandbox;
 typedef struct transfer_node {
 	PSandbox *psandbox;
 	struct hlist_node node;
-}Transfer;
+} PSandboxNode;
 
 struct psandbox_info {
 	long int bid;
@@ -86,15 +90,20 @@ struct psandbox_info {
 	struct hlist_node node;
 	size_t task_key;
 	struct list_head list;
-	Transfer transfers[10];
+	PSandboxNode transfers[PREALLOCATION_SIZE];
+	PSandboxNode holders[HOLDER_SIZE];
+	PSandboxNode competitors[COMPETITORS_SIZE];
+	int is_lazy;
+	u64 addr;
 	// Debug
 	int is_futex;
 };
 
 
 
-
+void do_freeze_psandbox(PSandbox *psandbox);
 void clean_psandbox(PSandbox *psandbox);
 void clean_unbind_psandbox(struct task_struct *task);
 PSandbox *get_psandbox(int bid);
+int do_unbind(int addr);
 #endif //LINUX_5_4_PSANDBOX_H
