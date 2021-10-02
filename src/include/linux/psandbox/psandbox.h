@@ -21,8 +21,8 @@ struct task_struct;
 #define LOW_PRIORITY 0
 
 #define PREALLOCATION_SIZE 10
-#define HOLDER_SIZE 100
-#define COMPETITORS_SIZE 100
+#define HOLDER_SIZE 1000
+#define COMPETITORS_SIZE 1000
 
 enum enum_event_type {
 	PREPARE,
