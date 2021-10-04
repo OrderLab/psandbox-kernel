@@ -67,7 +67,7 @@ SYSCALL_DEFINE0(create_psandbox)
 	psandbox->compensation_ticket = 0;
 	psandbox->is_white = 0;
 	psandbox->delay_ratio = 1;
-	psandbox->is_futex = 0;
+	psandbox->is_futex = 1;
 	psandbox->tail_requirement = 90;
 	psandbox->bad_activities = 0;
 	psandbox->creator_psandbox = current;
@@ -632,7 +632,7 @@ int do_unbind(int addr){
 
 void do_freeze_psandbox(PSandbox *psandbox){
 //	struct timespec64 current_tm, total_time;
-//	struct list_head temp;
+	struct list_head temp;
 
 	if (psandbox->compensation_ticket > 1) {
 		psandbox->compensation_ticket--;
@@ -660,9 +660,9 @@ void do_freeze_psandbox(PSandbox *psandbox){
 	//			}
 	//		}
 	//	}
-	//	temp = psandbox->activity->delay_list;
-	//	memset(psandbox->activity, 0, sizeof(Activity));
-	//	psandbox->activity->delay_list = temp;
+		temp = psandbox->activity->delay_list;
+		memset(psandbox->activity, 0, sizeof(Activity));
+		psandbox->activity->delay_list = temp;
 }
 
 void clean_psandbox(PSandbox *psandbox) {
