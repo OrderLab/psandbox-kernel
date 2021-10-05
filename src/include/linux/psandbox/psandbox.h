@@ -99,7 +99,7 @@ struct psandbox_info {
 	int is_futex;
 };
 
-
+extern long int live_psandbox;
 
 void do_freeze_psandbox(PSandbox *psandbox);
 void clean_psandbox(PSandbox *psandbox);

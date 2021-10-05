@@ -1619,25 +1619,6 @@ futex_wake(u32 __user *uaddr, unsigned int flags, int nr_wake, u32 bitset)
 		goto out_put_key;
 
 	spin_lock(&hb->lock);
-	// Psandbox change
-	if (current->psandbox && current->psandbox->is_futex) {
-		plist_for_each_entry_safe(this, next, &hb->chain, list) {
-			if (match_futex (&this->key, &key)) {
-				if (this->pi_state || this->rt_waiter) {
-					ret = -EINVAL;
-					break;
-				}
-
-				/* Check if one of the bits is set in both bitsets */
-				if (!(this->bitset & bitset))
-					continue;
-
-				if (this->task->psandbox && this->task->psandbox->state != BOX_FREEZE) {
-					content_n++;
-				}
-			}
-		}
-	}
 
 
 	plist_for_each_entry_safe(this, next, &hb->chain, list) {
@@ -1650,18 +1631,23 @@ futex_wake(u32 __user *uaddr, unsigned int flags, int nr_wake, u32 bitset)
 			/* Check if one of the bits is set in both bitsets */
 			if (!(this->bitset & bitset))
 				continue;
+
 			if(current->psandbox && this->task && this->task->psandbox && this->task->psandbox->is_futex) {
 				psandbox = this->task->psandbox;
 				if (psandbox && psandbox->state != BOX_FREEZE && !psandbox->is_white) {
 					struct timespec64 current_tm;
 					struct delaying_start *pos;
-					psandbox->activity->activity_state = ACTIVITY_ENTER;
 					ktime_get_real_ts64(&current_tm);
-
 
 					list_for_each_entry(pos,&psandbox->activity->delay_list,list) {
 						if (pos->key == (u32)uaddr) {
-							current_tm = timespec64_sub(current_tm,pos->delaying_start);
+							if (timespec64_compare(&pos->delaying_start,&psandbox->activity->execution_start) ){
+								current_tm.tv_nsec = 0;
+								current_tm.tv_sec = 0;
+							} else {
+								current_tm = timespec64_sub(current_tm,pos->delaying_start);
+							}
+
 						}
 					}
 					psandbox->activity->defer_time = timespec64_add(current_tm,psandbox->activity->defer_time);
@@ -1673,7 +1659,7 @@ futex_wake(u32 __user *uaddr, unsigned int flags, int nr_wake, u32 bitset)
 					defer_tm = timespec64_to_ktime(psandbox->activity->defer_time);
 					ktime_get_real_ts64(&current_tm);
 					executing_tm = timespec64_to_ktime(timespec64_sub(current_tm, psandbox->activity->execution_start));
-					if (defer_tm > (executing_tm - defer_tm) * psandbox->delay_ratio * content_n) {
+					if (defer_tm > (executing_tm - defer_tm) * psandbox->delay_ratio * live_psandbox) {
 						current->psandbox->activity->activity_state = ACTIVITY_PREEMPTED;
 						flag = 1;
 					}
@@ -1696,6 +1682,7 @@ out:
 		current->psandbox->activity->activity_state == ACTIVITY_PREEMPTED && current->psandbox->is_futex) {
 		set_current_state(TASK_INTERRUPTIBLE);
 		if (defer_tm > 1000000) {
+			pr_info("do sleep for psandbox %d, thread %d, defer time %u\n", psandbox->bid, current->pid, defer_tm);
 			defer_tm = 1000000;
 			schedule_hrtimeout(&defer_tm, HRTIMER_MODE_REL);
 		} else {
@@ -2821,7 +2808,7 @@ retry:
 				struct delaying_start *delaying_start;
 				delaying_start = (struct delaying_start *)kzalloc(sizeof(struct delaying_start),GFP_KERNEL);
 				ktime_get_real_ts64(&delaying_start->delaying_start);
-				delaying_start->key = (u32)uaddr;
+				delaying_start->key = (u32) uaddr;
 				list_add(&delaying_start->list,&current->psandbox->activity->delay_list);
 			}
 			current->psandbox->activity->activity_state = ACTIVITY_WAITING;

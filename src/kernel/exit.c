@@ -744,13 +744,13 @@ void __noreturn do_exit(long code)
 	validate_creds_for_do_exit(tsk);
 	//Psandbox change
 	if (tsk->is_psandbox) {
-//		pr_info("psandbox: signal to clean up the psandbox for thread %d\n", tsk->pid);
+		pr_info("psandbox: signal to clean up the psandbox for thread %d\n", tsk->pid);
 		if(tsk->psandbox) {
 			clean_psandbox(tsk->psandbox);
 		}
 	}
 	if (tsk->is_creator) {
-//		pr_info("psandbox: signal to clean up the unbind psandbox for thread %d\n", tsk->pid);
+		pr_info("psandbox: signal to clean up the unbind psandbox for thread %d\n", tsk->pid);
 		clean_unbind_psandbox(tsk);
 	}
 	/*
