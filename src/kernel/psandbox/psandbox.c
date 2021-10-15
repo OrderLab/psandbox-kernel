@@ -30,7 +30,7 @@ __cacheline_aligned DEFINE_RWLOCK(psandbox_lock);
 
 #define COMPENSATION_TICKET_NUMBER	1000L
 #define PROBING_NUMBER 100
-
+int count = 0;
 
 
 
@@ -130,7 +130,6 @@ SYSCALL_DEFINE0(freeze_psandbox)
 	}
 	do_freeze_psandbox(psandbox);
 
-
 	return 0;
 }
 
@@ -192,7 +191,6 @@ SYSCALL_DEFINE1(update_event, BoxEvent __user *, event) {
 				}
 			}
 			if (!node)	{
-				pr_info("call create for competitor\n");
 				node = (PSandboxNode *)kzalloc(sizeof(PSandboxNode),GFP_KERNEL);
 			}
 			node->psandbox = psandbox;
@@ -516,7 +514,7 @@ SYSCALL_DEFINE1(get_psandbox, int, addr)
 	return psandbox->current_task->pid;
 }
 
-SYSCALL_DEFINE1(start_manager, u32 __user *, uaddr) {
+SYSCALL_DEFINE2(annotate_resource, u32 __user *, uaddr, int, ACTIONaction) {
 	WhiteList *white_mutex;
 	white_mutex = (WhiteList *)kzalloc(sizeof(WhiteList),GFP_KERNEL);
 	white_mutex->addr = uaddr;
@@ -537,7 +535,7 @@ SYSCALL_DEFINE1(unbind_psandbox, u64, addr)
 	current->is_psandbox = 0;
 	psandbox->task_key =  addr;
 	ktime_get_real_ts64(&psandbox->activity->last_unbind_start);
-//	do_freeze_psandbox(psandbox);
+	do_freeze_psandbox(psandbox);
 //	printk(KERN_INFO "lazy unbind psandbox %d to addr %d\n", psandbox->bid,addr);
 	return psandbox->current_task->pid;
 }
@@ -631,9 +629,9 @@ int do_unbind(int addr){
 }
 
 void do_freeze_psandbox(PSandbox *psandbox){
-//	struct timespec64 current_tm, total_time;
+	struct timespec64 current_tm, total_time;
 	struct list_head temp;
-
+	ktime_t defer_tm;
 	if (psandbox->compensation_ticket > 1) {
 		psandbox->compensation_ticket--;
 	} else {
@@ -642,24 +640,25 @@ void do_freeze_psandbox(PSandbox *psandbox){
 
 	psandbox->state = BOX_FREEZE;
 	psandbox->finished_activities++;
-	//	ktime_get_real_ts64(&current_tm);
-	//	total_time = timespec64_sub(current_tm,psandbox->activity->execution_start);
-	//	//	printk(KERN_INFO "the defer time is %lu ns, psandbox %d\n", timespec64_to_ktime(psandbox->activity->defer_time), psandbox->bid);
-	//	psandbox->activity->execution_time = timespec64_sub(total_time,psandbox->activity->defer_time);
-	//	if (live_psandbox)  {
-	//		if(timespec64_to_ns(&psandbox->activity->execution_time) * psandbox->delay_ratio * live_psandbox
-	//		<  timespec64_to_ns(&psandbox->activity->defer_time)) {
-	//			psandbox->bad_activities++;
-	//			if (psandbox->action_level == LOW_PRIORITY)
-	//				psandbox->action_level = MID_PRIORITY;
-	//			if (psandbox->action_level != HIGHEST_PRIORITY && psandbox->finished_activities > PROBING_NUMBER && psandbox->bad_activities * 100
-	//			> (psandbox->tail_requirement * psandbox->finished_activities)) {
-	//				psandbox->action_level = HIGHEST_PRIORITY;
-	//				//				printk(KERN_INFO "give a ticket for %lu, bad activity %d, finish activity %d\n", psandbox->bid, psandbox->bad_activities, psandbox->finished_activities);
-	//				psandbox->compensation_ticket = COMPENSATION_TICKET_NUMBER;
-	//			}
-	//		}
-	//	}
+	ktime_get_real_ts64(&current_tm);
+	total_time = timespec64_sub(current_tm,psandbox->activity->execution_start);
+	//	printk(KERN_INFO "the defer time is %lu ns, psandbox %d\n", timespec64_to_ktime(psandbox->activity->defer_time), psandbox->bid);
+	psandbox->activity->execution_time = timespec64_sub(total_time,psandbox->activity->defer_time);
+	defer_tm = timespec64_to_ns(&psandbox->activity->defer_time);
+	if (live_psandbox)  {
+		if(timespec64_to_ns(&psandbox->activity->execution_time) * psandbox->delay_ratio * live_psandbox
+		<  defer_tm) {
+			psandbox->bad_activities++;
+			if (psandbox->action_level == LOW_PRIORITY)
+				psandbox->action_level = MID_PRIORITY;
+			if (psandbox->action_level != HIGHEST_PRIORITY && psandbox->finished_activities > PROBING_NUMBER && psandbox->bad_activities * 100> (psandbox->tail_requirement * psandbox->finished_activities)) {
+				psandbox->action_level = HIGHEST_PRIORITY;
+//				psandbox->compensation_ticket = COMPENSATION_TICKET_NUMBER;
+			}
+			set_current_state(TASK_INTERRUPTIBLE);
+			schedule_hrtimeout(&defer_tm, HRTIMER_MODE_REL);
+		}
+		}
 		temp = psandbox->activity->delay_list;
 		memset(psandbox->activity, 0, sizeof(Activity));
 		psandbox->activity->delay_list = temp;

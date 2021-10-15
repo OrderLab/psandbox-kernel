@@ -33,10 +33,10 @@ endif
 define BUILD_KERNEL
 	$(call INFO_MSG, Building image...)
 	mkdir -p build
-	cd build && cp /boot/config-`uname -r`* .config
-	cd src && make O=../build defconfig
-	cd src && make O=../build kvm_guest.config
-	cd src && make O=../build -j `nproc`
+	cd src && cp /boot/config-`uname -r`* .config
+	cd src && make defconfig
+	cd src && make kvm_guest.config
+	cd src && make -j `nproc`
 endef
 
 ### Building images ###

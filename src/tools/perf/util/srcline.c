@@ -127,6 +127,12 @@ static struct symbol *new_inline_sym(struct dso *dso,
 #define PACKAGE "perf"
 #include <bfd.h>
 
+#ifndef bfd_get_section_flags
+#define bfd_get_section_flags(bfd, ptr) ((void) bfd, (ptr)->flags)
+#define bfd_get_section_size(ptr) ((ptr)->size)
+#define bfd_get_section_vma(bfd, ptr) ((void) bfd, (ptr)->vma)
+#endif
+
 struct a2l_data {
 	const char 	*input;
 	u64	 	addr;

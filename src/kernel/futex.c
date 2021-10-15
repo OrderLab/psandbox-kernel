@@ -1641,13 +1641,13 @@ futex_wake(u32 __user *uaddr, unsigned int flags, int nr_wake, u32 bitset)
 
 					list_for_each_entry(pos,&psandbox->activity->delay_list,list) {
 						if (pos->key == (u32)uaddr) {
+//							pr_info("the delaying start is %ds,%ds. the execution start is %d,%d\n",pos->delaying_start.tv_sec,pos->delaying_start.tv_nsec, psandbox->activity->execution_start.tv_sec,psandbox->activity->execution_start.tv_nsec);
 							if (timespec64_compare(&pos->delaying_start,&psandbox->activity->execution_start) ){
+								current_tm = timespec64_sub(current_tm,pos->delaying_start);
+							} else {
 								current_tm.tv_nsec = 0;
 								current_tm.tv_sec = 0;
-							} else {
-								current_tm = timespec64_sub(current_tm,pos->delaying_start);
 							}
-
 						}
 					}
 					psandbox->activity->defer_time = timespec64_add(current_tm,psandbox->activity->defer_time);
@@ -1659,8 +1659,8 @@ futex_wake(u32 __user *uaddr, unsigned int flags, int nr_wake, u32 bitset)
 					defer_tm = timespec64_to_ktime(psandbox->activity->defer_time);
 					ktime_get_real_ts64(&current_tm);
 					executing_tm = timespec64_to_ktime(timespec64_sub(current_tm, psandbox->activity->execution_start));
+//					pr_info("the value is %dns\n",(executing_tm - defer_tm) * psandbox->delay_ratio * live_psandbox);
 					if (defer_tm > (executing_tm - defer_tm) * psandbox->delay_ratio * live_psandbox) {
-						current->psandbox->activity->activity_state = ACTIVITY_PREEMPTED;
 						flag = 1;
 					}
 				}
@@ -1678,14 +1678,18 @@ futex_wake(u32 __user *uaddr, unsigned int flags, int nr_wake, u32 bitset)
 out_put_key:
 	put_futex_key(&key);
 out:
-	if (current->psandbox && flag && current->psandbox->state != BOX_FREEZE && current->psandbox->activity &&
-		current->psandbox->activity->activity_state == ACTIVITY_PREEMPTED && current->psandbox->is_futex) {
+	if (current->psandbox && flag && current->psandbox->state != BOX_FREEZE && current->psandbox->activity && current->psandbox->is_futex) {
 		set_current_state(TASK_INTERRUPTIBLE);
-		if (defer_tm > 1000000) {
+		psandbox->activity->defer_time.tv_nsec = 0;
+		psandbox->activity->defer_time.tv_sec = 0;
+		if(defer_tm < 100000)
 			pr_info("do sleep for psandbox %d, thread %d, defer time %u\n", psandbox->bid, current->pid, defer_tm);
+		if (defer_tm > 1000000) {
+//			pr_info("do sleep for psandbox %d, thread %d, defer time %u\n", psandbox->bid, current->pid, defer_tm);
 			defer_tm = 1000000;
 			schedule_hrtimeout(&defer_tm, HRTIMER_MODE_REL);
 		} else {
+//			pr_info("do sleep for psandbox %d, thread %d, defer time %u\n", psandbox->bid, current->pid, defer_tm);
 			schedule_hrtimeout(&defer_tm, HRTIMER_MODE_REL);
 		}
 
