@@ -33,7 +33,7 @@ __cacheline_aligned DEFINE_RWLOCK(psandbox_lock);
 int count = 0;
 
 
-
+static DEFINE_SPINLOCK(id_lock);
 DECLARE_HASHTABLE(competitors_map, 10);
 DECLARE_HASHTABLE(holders_map, 10);
 DECLARE_HASHTABLE(transfers_map, 10);
@@ -43,7 +43,7 @@ DECLARE_HASHTABLE(transfers_map, 10);
 SYSCALL_DEFINE0(create_psandbox)
 {
 	PSandbox *psandbox;
-
+	unsigned long flags;
 
 	psandbox = (PSandbox *)kmalloc(sizeof(PSandbox), GFP_KERNEL);
 	if (!psandbox) {
@@ -54,7 +54,6 @@ SYSCALL_DEFINE0(create_psandbox)
 		do_unbind(0);
 	}
 
-	psandbox->bid = psandbox_id;
 	psandbox->current_task = current;
 	psandbox->activity = (Activity *)kzalloc(sizeof(Activity), GFP_KERNEL);
 	psandbox->state = BOX_START;
@@ -79,7 +78,11 @@ SYSCALL_DEFINE0(create_psandbox)
 	write_lock(&psandbox_lock);
 	list_add(&psandbox->list,&psandbox_list);
 	write_unlock(&psandbox_lock);
+	spin_lock_irqsave(&id_lock, flags);
 	psandbox_id++;
+	spin_unlock_irqrestore(&id_lock, flags);
+	psandbox->bid = psandbox_id;
+	
 	live_psandbox++;
 
 	printk(KERN_INFO "psandbox syscall called psandbox_create id =%ld by thread %d\n",
@@ -134,11 +137,18 @@ SYSCALL_DEFINE0(freeze_psandbox)
 }
 
 SYSCALL_DEFINE1(update_event, BoxEvent __user *, event) {
-	int event_type = event->event_type, key = event->key;
+	BoxEvent boxevent;
+	int event_type, key;
 	PSandbox *psandbox;
 	PSandboxNode *cur;
 	struct hlist_node *tmp;
 
+	if (copy_from_user(&boxevent, event, sizeof(*event))) {
+		pr_info("cannot read boxevent %p\n", event);
+		return -EINVAL;
+	}
+	event_type = boxevent.event_type;
+	key = boxevent.key;
 	if (!current->psandbox || !event) {
 //		printk(KERN_INFO "can't find sandbox for the update event %d\n",current->psandbox);
 		return -1;
@@ -146,7 +156,6 @@ SYSCALL_DEFINE1(update_event, BoxEvent __user *, event) {
 	psandbox = current->psandbox;
 	if(psandbox->is_lazy == 1)
 		return 0;
-
 	switch (event_type) {
 	case PREPARE:{
 		int is_duplicate = false, is_first = true;
@@ -190,7 +199,8 @@ SYSCALL_DEFINE1(update_event, BoxEvent __user *, event) {
 					break;
 				}
 			}
-			if (!node)	{
+			if (!node) {
+				pr_info("create for competitor\n");
 				node = (PSandboxNode *)kzalloc(sizeof(PSandboxNode),GFP_KERNEL);
 			}
 			node->psandbox = psandbox;
@@ -257,7 +267,7 @@ SYSCALL_DEFINE1(update_event, BoxEvent __user *, event) {
 				}
 			}
 			if (!node)	{
-//				pr_info("call create for holder\n");
+				pr_info("call create for holder\n");
 				node = (PSandboxNode *)kzalloc(sizeof(PSandboxNode),GFP_KERNEL);
 			}
 			node->psandbox = psandbox;
