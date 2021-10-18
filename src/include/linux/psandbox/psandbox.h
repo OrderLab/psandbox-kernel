@@ -14,6 +14,7 @@
 #include <linux/list.h>
 #include <linux/thread_info.h>
 #include <linux/spinlock_types.h>
+#include <linux/ktime.h>
 struct task_struct;
 
 #define HIGHEST_PRIORITY 2
@@ -23,6 +24,7 @@ struct task_struct;
 #define PREALLOCATION_SIZE 10
 #define HOLDER_SIZE 1000
 #define COMPETITORS_SIZE 1000
+#define SANDBOX_NUMBER 50
 
 enum enum_event_type {
 	PREPARE,
@@ -73,6 +75,12 @@ typedef struct transfer_node {
 	struct hlist_node node;
 } PSandboxNode;
 
+typedef struct statistics_node {
+	PSandbox *psandbox;
+	int bad_action;
+	struct hlist_node node;
+} StatisticNode;
+
 struct psandbox_info {
 	long int bid;
 	struct task_struct *current_task;
@@ -84,7 +92,9 @@ struct psandbox_info {
 	int finished_activities;
 	int bad_activities;
 	int action_level;
-	int compensation_ticket;
+	ktime_t total_execution_time;
+	ktime_t total_defer_time;
+	ktime_t average_defer_time;
 	struct list_head *white_list;
 	int is_white;
 	struct hlist_node node;
