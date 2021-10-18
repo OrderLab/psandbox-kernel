@@ -13,7 +13,7 @@
 #include <linux/time64.h>
 #include <linux/list.h>
 #include <linux/thread_info.h>
-
+#include <linux/spinlock_types.h>
 struct task_struct;
 
 #define HIGHEST_PRIORITY 2
@@ -90,6 +90,7 @@ struct psandbox_info {
 	struct hlist_node node;
 	size_t task_key;
 	struct list_head list;
+	spinlock_t lock;
 	PSandboxNode transfers[PREALLOCATION_SIZE];
 	PSandboxNode holders[HOLDER_SIZE];
 	PSandboxNode competitors[COMPETITORS_SIZE];
