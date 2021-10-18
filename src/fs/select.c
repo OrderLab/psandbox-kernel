@@ -256,12 +256,13 @@ static int poll_schedule_timeout(struct poll_wqueues *pwq, int state,
 	 */
 	smp_store_mb(pwq->triggered, 0);
 	// PSandbox changes
-//  	if(rc == -4 && current->psandbox) {
-//		if(current->psandbox->state == BOX_AWAKE) {
-//			rc = 0;
-//			current->psandbox->state = BOX_START;
-//		}
-//  	}
+  	if(rc == -4 && current->psandbox) {
+		if(current->psandbox->state == BOX_AWAKE) {
+			rc = 0;
+		//	pr_info("call awake for psandbox %d\n",current->psandbox->bid);
+			current->psandbox->state = BOX_START;
+		}
+  	}
 	return rc;
 }
 

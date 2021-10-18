@@ -379,22 +379,21 @@ SYSCALL_DEFINE1(update_event, BoxEvent __user *, event) {
 			}
 		}
 
-		if (penalty_ns) {
+		if (penalty_ns > 1000000) {
 			__set_current_state(TASK_INTERRUPTIBLE);
-//			if (good_task) {
-//				wake_up_process(good_task);
-//			}
-//			pr_info ("END\n");
-			//	pr_info("event: sleep psandbox %d, thread %d, defer time %u\n", psandbox->bid, current->pid, penalty_ns);
-			schedule_hrtimeout(&penalty_ns, HRTIMER_MODE_REL);
-//			if (penalty_ns > 1000000) {
-//				penalty_ns = 1000000;
+			if (good_task) {
+			//	pr_info("wake up good task %d\n",good_task->pid);
+				good_task->psandbox->state = BOX_AWAKE;
+				wake_up_process(good_task);
+			}
+			if (penalty_ns > 10000000) {
+				penalty_ns = 10000000;
 //				pr_info("event: sleep psandbox %d, thread %d, defer time %u\n", psandbox->bid, current->pid, penalty_ns);
-//				schedule_hrtimeout(&penalty_ns, HRTIMER_MODE_REL);
-//			} else {
+				schedule_hrtimeout(&penalty_ns, HRTIMER_MODE_REL);
+		   	} else {
 //				pr_info("event: sleep psandbox %d, thread %d, defer time %u\n", psandbox->bid, current->pid, penalty_ns);
-//				schedule_hrtimeout(&penalty_ns, HRTIMER_MODE_REL);
-//			}
+				schedule_hrtimeout(&penalty_ns, HRTIMER_MODE_REL);
+			}
 
 		}
 		break;
