@@ -89,9 +89,9 @@ struct psandbox_info {
 	int delay_ratio;
 	int tail_requirement;
 	Activity *activity;
-	int finished_activities;
-	int bad_activities;
-	int action_level;
+	long int finished_activities;
+	long int bad_activities;
+	long int action_level;
 	ktime_t total_execution_time;
 	ktime_t total_defer_time;
 	ktime_t average_defer_time;
@@ -108,6 +108,7 @@ struct psandbox_info {
 	u64 addr;
 	// Debug
 	int is_futex;
+	long int count;
 };
 
 extern long int live_psandbox;

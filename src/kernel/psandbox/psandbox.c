@@ -71,6 +71,7 @@ SYSCALL_DEFINE0(create_psandbox)
 	psandbox->creator_psandbox = current;
 	psandbox->is_lazy = 0;
 	psandbox->task_key = 0;
+	psandbox->count = 0;
         spin_lock_init(&psandbox->lock);
 	INIT_LIST_HEAD(&psandbox->activity->delay_list);
 
@@ -117,6 +118,7 @@ SYSCALL_DEFINE0(activate_psandbox)
 	}
 	psandbox->state = BOX_ACTIVE;
 	ktime_get_real_ts64(&psandbox->activity->execution_start);
+
 	return 0;
 }
 
@@ -130,6 +132,7 @@ SYSCALL_DEFINE0(freeze_psandbox)
 		return 0;
 	}
 	do_freeze_psandbox(psandbox);
+
 
 	return 0;
 }
@@ -153,7 +156,7 @@ SYSCALL_DEFINE1(update_event, BoxEvent __user *, event) {
 		return -1;
 	}
 	psandbox = current->psandbox;
-
+	psandbox->count++;
 	if(psandbox->is_lazy == 1)
 		return 0;
 	switch (event_type) {
@@ -289,7 +292,7 @@ SYSCALL_DEFINE1(update_event, BoxEvent __user *, event) {
 				}
 			}
 			if (!node)	{
-				pr_info("call create for holder\n");
+				pr_info("create holder with malloc by psandbox %d\n",psandbox->bid);
 				node = (PSandboxNode *)kzalloc(sizeof(PSandboxNode),GFP_KERNEL);
 			}
 			node->psandbox = psandbox;
@@ -613,8 +616,9 @@ void clean_psandbox(PSandbox *psandbox) {
 	PSandboxNode *cur;
 	StatisticNode *stat_cur;
 	struct delaying_start *pos,*temp;
-	printk(KERN_INFO "psandbox syscall called psandbox_release id =%ld by the thread %d\n",
-	       psandbox->bid, current->pid);
+
+	printk(KERN_INFO "psandbox syscall called psandbox_release id =%ld by the thread %d, average syscall %d\n",
+	       psandbox->bid, current->pid,psandbox->count/psandbox->finished_activities);
 
 	write_lock(&competitors_lock);
 	hash_for_each_safe(competitors_map, bkt, tmp, cur, node) {
