@@ -40,12 +40,12 @@ DECLARE_HASHTABLE(transfers_map, 10);
 DECLARE_HASHTABLE(stat_map,10);
 
 /* This function will create a psandbox and bind to the current thread */
-SYSCALL_DEFINE0(create_psandbox)
+SYSCALL_DEFINE3(create_psandbox, int, type, int, isolation_level, int, priority)
 {
 	PSandbox *psandbox;
 	unsigned long flags;
 
-	psandbox = (PSandbox *)kmalloc(sizeof(PSandbox), GFP_KERNEL);
+	psandbox = (PSandbox *)kzalloc(sizeof(PSandbox), GFP_KERNEL);
 	if (!psandbox) {
 		return -1;
 	}
@@ -72,6 +72,9 @@ SYSCALL_DEFINE0(create_psandbox)
 	psandbox->is_lazy = 0;
 	psandbox->task_key = 0;
 	psandbox->count = 0;
+	psandbox->rule.type = type;
+	psandbox->rule.isolation_level = type;
+	psandbox->priority = priority;
         spin_lock_init(&psandbox->lock);
 	INIT_LIST_HEAD(&psandbox->activity->delay_list);
 
@@ -240,8 +243,8 @@ SYSCALL_DEFINE1(update_event, BoxEvent __user *, event) {
 		struct timespec64 current_tm, defer_tm;
 		struct delaying_start *pos;
 		psandbox->activity->activity_state = ACTIVITY_ENTER;
-		//Free the competitors map
-
+		// Free the competitors map
+		defer_tm.tv_sec = -1;
 		write_lock(&competitors_lock);
 		hash_for_each_possible_safe (competitors_map, cur, tmp, node, key) {
 			if (cur->psandbox == psandbox) {
@@ -263,7 +266,7 @@ SYSCALL_DEFINE1(update_event, BoxEvent __user *, event) {
 				break;
 			}
 		}
-		if(defer_tm.tv_sec == 0 && defer_tm.tv_nsec == 0) {
+		if(defer_tm.tv_sec == -1) {
 			printk (KERN_INFO "can't find the key for delaying start for psandbox %ld\n", psandbox->bid);
 		}
 		current_tm = psandbox->activity->defer_time;
@@ -291,8 +294,9 @@ SYSCALL_DEFINE1(update_event, BoxEvent __user *, event) {
 					break;
 				}
 			}
+
 			if (!node)	{
-				pr_info("create holder with malloc by psandbox %d\n",psandbox->bid);
+				pr_info("create holder with malloc by psandbox %ld\n",psandbox->bid);
 				node = (PSandboxNode *)kzalloc(sizeof(PSandboxNode),GFP_KERNEL);
 			}
 			node->psandbox = psandbox;
@@ -311,7 +315,7 @@ SYSCALL_DEFINE1(update_event, BoxEvent __user *, event) {
 			current_defer, current_execution;
 		PSandbox *victim = NULL;
 		int is_holder = false;
-		int num_comp = 0;
+
 		psandbox->activity->activity_state = ACTIVITY_EXIT;
 
 		write_lock(&holders_lock);
@@ -337,15 +341,14 @@ SYSCALL_DEFINE1(update_event, BoxEvent __user *, event) {
 		// calculating the defering time
 		read_lock(&competitors_lock);
 		hash_for_each_possible_safe (competitors_map, cur, tmp, node, key) {
+			int is_noisy = false;
 			if (psandbox->action_level != LOW_PRIORITY)
 				break;
 
+			defer_tm.tv_sec = -1;
 			if (cur->psandbox->bid != psandbox->bid) {
 				struct delaying_start *pos;
 
-				if (psandbox->average_defer_time < 2 * average_defer_time) {
-					continue;
-				}
 
 				ktime_get_real_ts64(&current_tm);
 				spin_lock(&cur->psandbox->lock);
@@ -357,15 +360,27 @@ SYSCALL_DEFINE1(update_event, BoxEvent __user *, event) {
 				}
 				spin_unlock(&cur->psandbox->lock);
 
-				if (defer_tm.tv_sec == 0 &&
-				    defer_tm.tv_nsec == 0) {
-					printk(KERN_INFO "can't find the key for delaying start for psandbox %ld\n", psandbox->bid);
+				if (defer_tm.tv_sec == -1) {
+					printk(KERN_INFO "2. can't find the key for delaying start for psandbox %ld\n", psandbox->bid);
 				}
 				executing_tm = timespec64_sub(timespec64_sub(current_tm, cur->psandbox->activity ->execution_start), defer_tm);
 				//				printk (KERN_INFO "current time %lu, executing start %lu ns, the executing time is %lu ns, the defer time is %lu ns for psandbox %d, current psandbox %d\n",timespec64_to_ns(&current_tm),timespec64_to_ns(&cur->psandbox->activity->execution_start),timespec64_to_ns(&executing_tm),timespec64_to_ns(&defer_tm), cur->psandbox->bid, psandbox->bid);
 				current_defer = timespec64_to_ns(&defer_tm);
 				current_execution = timespec64_to_ns(&executing_tm);
-				if (current_defer >current_execution * cur->psandbox->delay_ratio * live_psandbox) {
+				switch (cur->psandbox->rule.type) {
+				case RELATIVE:
+					if (current_defer * 100 > current_execution * cur->psandbox->rule.isolation_level) {
+						is_noisy = true;
+					}
+					break;
+				case SCALABLE:
+					if (current_defer * 100 >current_execution * cur->psandbox->rule.isolation_level * live_psandbox) {
+						is_noisy = true;
+					}
+					break;
+				}
+
+				if (is_noisy) {
 					// printk (KERN_INFO "the defer time is %ld for psandbox %ld\n",timespec64_to_ns(&defer_tm),cur->psandbox->bid);
 					// If the current psandbox is interferenced harder than previous one
 					if (current_defer * old_execution > old_defer * current_execution) {
@@ -381,8 +396,8 @@ SYSCALL_DEFINE1(update_event, BoxEvent __user *, event) {
 
 		if (penalty_ns > 10000 && victim) {
 			int *bad_action = NULL;
-			ktime_t old_distance = victim->average_defer_time - average_defer_time;
-			ktime_t new_distance;
+			ktime_t old_slack = victim->total_defer_time;
+			ktime_t new_slack = victim->total_execution_time;
 			stat_cur = NULL;
 			read_lock(&stat_map_lock);
 			hash_for_each_possible_safe (stat_map, stat_cur, tmp, node, key) {
@@ -393,7 +408,7 @@ SYSCALL_DEFINE1(update_event, BoxEvent __user *, event) {
 			}
 
 			if(!bad_action) {
-				pr_info("Can't find the psandbox %d in the stat map\n",victim->bid);
+				pr_info("Can't find the psandbox %ld in the stat map\n",victim->bid);
 			}
 			read_unlock(&stat_map_lock);
 
@@ -413,10 +428,11 @@ SYSCALL_DEFINE1(update_event, BoxEvent __user *, event) {
 				schedule_hrtimeout(&penalty_ns,HRTIMER_MODE_REL);
 			}
 
-			new_distance = victim->average_defer_time - average_defer_time;
+			new_slack *= victim->total_defer_time;
+			old_slack *= victim->total_execution_time;
 			read_lock(&stat_map_lock);
 			if (bad_action) {
-				if (new_distance < old_distance) {
+				if (new_slack < old_slack) {
 					(*bad_action)++;
 				} else {
 					if ((*bad_action) > 1)
@@ -465,7 +481,7 @@ SYSCALL_DEFINE1(get_psandbox, int, addr)
 	return psandbox->current_task->pid;
 }
 
-SYSCALL_DEFINE2(annotate_resource, u32 __user *, uaddr, int, ACTIONaction) {
+SYSCALL_DEFINE2(annotate_resource, u32 __user *, uaddr, int, action_type) {
 	WhiteList *white_mutex;
 	white_mutex = (WhiteList *)kzalloc(sizeof(WhiteList),GFP_KERNEL);
 	white_mutex->addr = uaddr;
@@ -617,7 +633,7 @@ void clean_psandbox(PSandbox *psandbox) {
 	StatisticNode *stat_cur;
 	struct delaying_start *pos,*temp;
 
-	printk(KERN_INFO "psandbox syscall called psandbox_release id =%ld by the thread %d, average syscall %d\n",
+	printk(KERN_INFO "psandbox syscall called psandbox_release id =%ld by the thread %d, average syscall %ld\n",
 	       psandbox->bid, current->pid,psandbox->count/psandbox->finished_activities);
 
 	write_lock(&competitors_lock);

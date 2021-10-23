@@ -1596,12 +1596,12 @@ futex_wake(u32 __user *uaddr, unsigned int flags, int nr_wake, u32 bitset)
 {
 	struct futex_hash_bucket *hb;
 	struct futex_q *this, *next;
-	PSandbox *psandbox;
+	PSandbox *psandbox = NULL;
 	struct timespec64 current_tm;
 	ktime_t defer_tm;
 	ktime_t executing_tm;
 	union futex_key key = FUTEX_KEY_INIT;
-	int ret, content_n = 0;
+	int ret;
 	int flag = 0;
 	DEFINE_WAKE_Q(wake_q);
 
@@ -1640,7 +1640,7 @@ futex_wake(u32 __user *uaddr, unsigned int flags, int nr_wake, u32 bitset)
 					ktime_get_real_ts64(&current_tm);
 
 					list_for_each_entry(pos,&psandbox->activity->delay_list,list) {
-						if (pos->key == (u32)uaddr) {
+						if (pos->key == (u64)uaddr) {
 //							pr_info("the delaying start is %ds,%ds. the execution start is %d,%d\n",pos->delaying_start.tv_sec,pos->delaying_start.tv_nsec, psandbox->activity->execution_start.tv_sec,psandbox->activity->execution_start.tv_nsec);
 							if (timespec64_compare(&pos->delaying_start,&psandbox->activity->execution_start) ){
 								current_tm = timespec64_sub(current_tm,pos->delaying_start);
@@ -1683,7 +1683,7 @@ out:
 		psandbox->activity->defer_time.tv_nsec = 0;
 		psandbox->activity->defer_time.tv_sec = 0;
 		if(defer_tm < 100000)
-			pr_info("do sleep for psandbox %d, thread %d, defer time %u\n", psandbox->bid, current->pid, defer_tm);
+			pr_info("do sleep for psandbox %ld, thread %d, defer time %llu\n", psandbox->bid, current->pid, defer_tm);
 		if (defer_tm > 1000000) {
 //			pr_info("do sleep for psandbox %d, thread %d, defer time %u\n", psandbox->bid, current->pid, defer_tm);
 			defer_tm = 1000000;
@@ -2802,7 +2802,7 @@ retry:
 		}
 		if(!current->psandbox->is_white) {
 			list_for_each_entry(pos,&current->psandbox->activity->delay_list,list) {
-				if (pos->key == (u32)uaddr) {
+				if (pos->key == (u64)uaddr) {
 					is_first = false;
 					ktime_get_real_ts64(&pos->delaying_start);
 				}
@@ -2812,7 +2812,7 @@ retry:
 				struct delaying_start *delaying_start;
 				delaying_start = (struct delaying_start *)kzalloc(sizeof(struct delaying_start),GFP_KERNEL);
 				ktime_get_real_ts64(&delaying_start->delaying_start);
-				delaying_start->key = (u32) uaddr;
+				delaying_start->key = (u64) uaddr;
 				list_add(&delaying_start->list,&current->psandbox->activity->delay_list);
 			}
 			current->psandbox->activity->activity_state = ACTIVITY_WAITING;

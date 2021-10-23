@@ -33,10 +33,17 @@ enum enum_event_type {
 	UNHOLD,
 };
 
+enum enum_isolation_type { ABSOLUTE, RELATIVE, SCALABLE, ISOLATION_DEFAULT};
+
 typedef struct sandboxEvent {
 	enum enum_event_type event_type;
 	u32 key;
 } BoxEvent;
+
+typedef struct isolationRule {
+	enum enum_isolation_type type;
+	int isolation_level; // ratio = isolation_level / 100
+}IsolationRule;
 
 enum enum_psandbox_state {
 	BOX_ACTIVE, BOX_FREEZE, BOX_START, BOX_AWAKE, BOX_PREEMPTED
@@ -48,7 +55,7 @@ enum enum_activity_state {
 
 struct delaying_start {
 	struct timespec64 delaying_start;
-	u32 key;
+	u64 key;
 	struct list_head list;
 };
 
@@ -95,6 +102,9 @@ struct psandbox_info {
 	ktime_t total_execution_time;
 	ktime_t total_defer_time;
 	ktime_t average_defer_time;
+	ktime_t average_execution_time;
+	IsolationRule rule; // the rule for isolation
+	int priority;
 	struct list_head *white_list;
 	int is_white;
 	struct hlist_node node;
