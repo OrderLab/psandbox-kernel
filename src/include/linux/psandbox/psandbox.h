@@ -63,8 +63,6 @@ typedef struct activity {
 	enum enum_activity_state activity_state;
 	struct timespec64 execution_start;
 	struct timespec64 defer_time;
-	struct list_head delay_list;
-
 	struct timespec64 execution_time;
 	struct timespec64 last_unbind_start;
 	struct timespec64 unbind_time;
@@ -79,6 +77,7 @@ typedef struct white_list {
 typedef struct psandbox_info PSandbox;
 typedef struct transfer_node {
 	PSandbox *psandbox;
+	struct timespec64 delaying_start;
 	struct hlist_node node;
 } PSandboxNode;
 
@@ -86,6 +85,7 @@ typedef struct statistics_node {
 	PSandbox *psandbox;
 	int bad_action;
 	struct hlist_node node;
+	spinlock_t stat_lock;
 } StatisticNode;
 
 struct psandbox_info {
@@ -114,11 +114,14 @@ struct psandbox_info {
 	PSandboxNode transfers[PREALLOCATION_SIZE];
 	PSandboxNode holders[HOLDER_SIZE];
 	PSandboxNode competitors[COMPETITORS_SIZE];
+	struct list_head delay_list;
 	int is_lazy;
 	u64 addr;
 	// Debug
 	int is_futex;
 	long int count;
+	long unsigned int competitor;
+	long int unhold;
 };
 
 extern long int live_psandbox;

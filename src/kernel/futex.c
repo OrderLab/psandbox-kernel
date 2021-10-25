@@ -1639,7 +1639,7 @@ futex_wake(u32 __user *uaddr, unsigned int flags, int nr_wake, u32 bitset)
 					struct delaying_start *pos;
 					ktime_get_real_ts64(&current_tm);
 
-					list_for_each_entry(pos,&psandbox->activity->delay_list,list) {
+					list_for_each_entry(pos,&psandbox->delay_list,list) {
 						if (pos->key == (u64)uaddr) {
 //							pr_info("the delaying start is %ds,%ds. the execution start is %d,%d\n",pos->delaying_start.tv_sec,pos->delaying_start.tv_nsec, psandbox->activity->execution_start.tv_sec,psandbox->activity->execution_start.tv_nsec);
 							if (timespec64_compare(&pos->delaying_start,&psandbox->activity->execution_start) ){
@@ -2801,7 +2801,7 @@ retry:
 			}
 		}
 		if(!current->psandbox->is_white) {
-			list_for_each_entry(pos,&current->psandbox->activity->delay_list,list) {
+			list_for_each_entry(pos,&current->psandbox->delay_list,list) {
 				if (pos->key == (u64)uaddr) {
 					is_first = false;
 					ktime_get_real_ts64(&pos->delaying_start);
@@ -2813,7 +2813,7 @@ retry:
 				delaying_start = (struct delaying_start *)kzalloc(sizeof(struct delaying_start),GFP_KERNEL);
 				ktime_get_real_ts64(&delaying_start->delaying_start);
 				delaying_start->key = (u64) uaddr;
-				list_add(&delaying_start->list,&current->psandbox->activity->delay_list);
+				list_add(&delaying_start->list,&current->psandbox->delay_list);
 			}
 			current->psandbox->activity->activity_state = ACTIVITY_WAITING;
 		}
