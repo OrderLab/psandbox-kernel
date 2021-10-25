@@ -138,8 +138,6 @@ SYSCALL_DEFINE0(freeze_psandbox)
 	return 0;
 }
 
-#define CKPT 0
-
 SYSCALL_DEFINE1(update_event, BoxEvent __user *, event) {
 	BoxEvent boxevent;
 	int event_type, key;
@@ -148,19 +146,6 @@ SYSCALL_DEFINE1(update_event, BoxEvent __user *, event) {
 	StatisticNode *stat_cur = NULL;
 	struct hlist_node *tmp;
 
-	static int tcnt = 0;
-	static struct ckpt_t {
-		cycles_t clk;
-		u64 t;
-		const char *name;
-	} ckpts[32] = { { 0, 0, NULL, }, };
-	static u64 last_ns = 0;
-	if (CKPT && last_ns == 0)
-		last_ns = ktime_get_ns();
-	ckpts[0] = (struct ckpt_t) {
-	.clk = get_cycles(),
-	.t = ktime_get_ns(),
-	.name = "init", };
 	if (copy_from_user(&boxevent, event, sizeof(*event))) {
 		pr_info("cannot read boxevent %p\n", event);
 		return -EINVAL;
@@ -269,7 +254,7 @@ SYSCALL_DEFINE1(update_event, BoxEvent __user *, event) {
 		if (!is_duplicate) {
 			PSandboxNode* node = NULL;
 			int i;
-			for (i = 0; i<PREALLOCATION_SIZE ; ++i) {
+			for (i = 0; i< HOLDER_SIZE ; ++i) {
 				if (psandbox->holders[i].psandbox == NULL) {
 					node = psandbox->holders + i;
 					break;
@@ -299,25 +284,25 @@ SYSCALL_DEFINE1(update_event, BoxEvent __user *, event) {
 		psandbox->unhold++;
 		psandbox->activity->activity_state = ACTIVITY_EXIT;
 
-		write_lock(&holders_lock);
-		hash_for_each_possible_safe (holders_map, cur, tmp, node, key) {
-			if (cur->psandbox == psandbox) {
-				is_holder = true;
-				if (&psandbox->holders[0] <= cur && cur < &psandbox->holders[0] + HOLDER_SIZE) {
-					cur->psandbox = NULL;
-				} else {
-					kfree(cur);
-				}
-				hash_del(&cur->node);
-				break;
-			}
-		}
-		write_unlock(&holders_lock);
+//		write_lock(&holders_lock);
+//		hash_for_each_possible_safe (holders_map, cur, tmp, node, key) {
+//			if (cur->psandbox == psandbox) {
+//				is_holder = true;
+//				if (&psandbox->holders[0] <= cur && cur < &psandbox->holders[0] + HOLDER_SIZE) {
+//					cur->psandbox = NULL;
+//				} else {
+//					kfree(cur);
+//				}
+//				hash_del(&cur->node);
+//				break;
+//			}
+//		}
+//		write_unlock(&holders_lock);
 
 		//If the current psandbox is not the holder of the event, skip the following penalty
-		if (!is_holder) {
-			return 1;
-		}
+//		if (!is_holder) {
+//			return 1;
+//		}
 
 		// calculating the defering time
 		int count = 0;
@@ -463,20 +448,7 @@ SYSCALL_DEFINE1(update_event, BoxEvent __user *, event) {
 	}
 	default:break;
 	}
-	ckpts[1].clk += get_cycles() - ckpts[0].clk;
-	ckpts[1].t += ktime_get_ns() - ckpts[0].t;
-	ckpts[1].name = "end";
-	if (CKPT) {
-		++tcnt;
-		if (tcnt % 100000 == 0) {
-			u64 new_time = ktime_get_ns();
-			printk("update call 100000 times interval %lld ns\n", new_time - last_ns);
-			last_ns = new_time;
 
-			printk("bind call total %llu ns, %llu cycles\n",
-			       ckpts[1].t / tcnt, ckpts[1].clk / tcnt);
-		}
-	}
 	return 0;
 }
 
@@ -488,7 +460,7 @@ SYSCALL_DEFINE0(get_current_psandbox)
 //		printk(KERN_INFO "there is no psandbox in current thread\n");
 		return -1;
 	}
-	return current->pid;
+	return current->psandbox->bid;
 }
 
 SYSCALL_DEFINE1(get_psandbox, int, addr)
@@ -662,9 +634,14 @@ void clean_psandbox(PSandbox *psandbox) {
 	PSandboxNode *cur;
 	StatisticNode *stat_cur;
 	struct delaying_start *pos,*temp;
+	if (psandbox->finished_activities > 0) {
+		pr_info( "psandbox syscall called psandbox_release id =%ld by the thread %d, average syscall %ld, total unhold %d, competitor %d\n",
+		       psandbox->bid, current->pid,psandbox->count/psandbox->finished_activities,psandbox->unhold/psandbox->finished_activities,psandbox->competitor/psandbox->finished_activities);
+	} else {
+		pr_info("psandbox syscall called psandbox_release id =%ld by the thread %d\n",
+		       psandbox->bid, current->pid);
+	}
 
-	printk(KERN_INFO "psandbox syscall called psandbox_release id =%ld by the thread %d, average syscall %ld, total unhold %d, competitor %d\n",
-	       psandbox->bid, current->pid,psandbox->count/psandbox->finished_activities,psandbox->unhold/psandbox->finished_activities,psandbox->competitor/psandbox->finished_activities);
 
 	write_lock(&competitors_lock);
 	hash_for_each_safe(competitors_map, bkt, tmp, cur, node) {
@@ -678,18 +655,18 @@ void clean_psandbox(PSandbox *psandbox) {
 		}
 	}
 	write_unlock(&competitors_lock);
-	write_lock(&holders_lock);
-	hash_for_each_safe(holders_map, bkt, tmp, cur, node) {
-		if (cur->psandbox == psandbox) {
-			hash_del(&cur->node);
-			if (&psandbox->holders[0] <= cur && cur < &psandbox->holders[0] + HOLDER_SIZE) {
-				cur->psandbox = NULL;
-			}  else {
-				kfree(cur);
-			}
-		}
-	}
-	write_unlock(&holders_lock);
+//	write_lock(&holders_lock);
+//	hash_for_each_safe(holders_map, bkt, tmp, cur, node) {
+//		if (cur->psandbox == psandbox) {
+//			hash_del(&cur->node);
+//			if (&psandbox->holders[0] <= cur && cur < &psandbox->holders[0] + HOLDER_SIZE) {
+//				cur->psandbox = NULL;
+//			}  else {
+//				kfree(cur);
+//			}
+//		}
+//	}
+//	write_unlock(&holders_lock);
 	write_lock(&transfers_lock);
 	hash_for_each_safe(transfers_map, bkt, tmp, cur, node) {
 		if (cur->psandbox == psandbox) {
