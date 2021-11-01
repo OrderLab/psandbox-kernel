@@ -138,7 +138,7 @@ SYSCALL_DEFINE0(freeze_psandbox)
 	return 0;
 }
 
-SYSCALL_DEFINE1(update_event, BoxEvent __user *, event) {
+SYSCALL_DEFINE2(update_event, BoxEvent __user *, event, int, is_lazy) {
 	BoxEvent boxevent;
 	int event_type, key;
 	PSandbox *psandbox;
@@ -239,42 +239,6 @@ SYSCALL_DEFINE1(update_event, BoxEvent __user *, event) {
 		psandbox->activity->defer_time = timespec64_add(defer_tm, current_tm);
 		break;
 	}
-	case HOLD: {
-		int is_duplicate = false;
-		// Add the holder map
-		read_lock(&holders_lock);
-		hash_for_each_possible_safe(holders_map, cur,tmp, node,key) {
-			if (cur->psandbox == psandbox) {
-				is_duplicate = true;
-				break;
-			}
-		}
-		read_unlock(&holders_lock);
-
-		if (!is_duplicate) {
-			PSandboxNode* node = NULL;
-			int i;
-			for (i = 0; i< HOLDER_SIZE ; ++i) {
-				if (psandbox->holders[i].psandbox == NULL) {
-					node = psandbox->holders + i;
-					break;
-				}
-			}
-
-			if (!node)	{
-				pr_info("create holder with malloc by psandbox %ld\n",psandbox->bid);
-				node = (PSandboxNode *)kzalloc(sizeof(PSandboxNode),GFP_KERNEL);
-			}
-			node->psandbox = psandbox;
-			write_lock(&holders_lock);
-			hash_add(holders_map,&node->node,key);
-			write_unlock(&holders_lock);
-		}
-
-		is_duplicate = false;
-
-		break;
-	}
 	case UNHOLD: {
 		struct timespec64 current_tm, defer_tm, executing_tm;
 		ktime_t penalty_ns = 0, old_defer = 0, old_execution = 1,
@@ -283,26 +247,6 @@ SYSCALL_DEFINE1(update_event, BoxEvent __user *, event) {
 		int is_holder = false;
 		psandbox->unhold++;
 		psandbox->activity->activity_state = ACTIVITY_EXIT;
-
-//		write_lock(&holders_lock);
-//		hash_for_each_possible_safe (holders_map, cur, tmp, node, key) {
-//			if (cur->psandbox == psandbox) {
-//				is_holder = true;
-//				if (&psandbox->holders[0] <= cur && cur < &psandbox->holders[0] + HOLDER_SIZE) {
-//					cur->psandbox = NULL;
-//				} else {
-//					kfree(cur);
-//				}
-//				hash_del(&cur->node);
-//				break;
-//			}
-//		}
-//		write_unlock(&holders_lock);
-
-		//If the current psandbox is not the holder of the event, skip the following penalty
-//		if (!is_holder) {
-//			return 1;
-//		}
 
 		// calculating the defering time
 		int count = 0;
@@ -315,7 +259,7 @@ SYSCALL_DEFINE1(update_event, BoxEvent __user *, event) {
 
 			defer_tm.tv_sec = -1;
 			if (cur->psandbox->bid != psandbox->bid) {
-//				struct delaying_start *pos;
+
 				count++;
 				switch (cur->psandbox->rule.type) {
 					case RELATIVE:
@@ -338,7 +282,7 @@ SYSCALL_DEFINE1(update_event, BoxEvent __user *, event) {
 					printk(KERN_INFO "2. can't find the key for delaying start for psandbox %ld\n", psandbox->bid);
 				}
 				executing_tm = timespec64_sub(timespec64_sub(current_tm, cur->psandbox->activity ->execution_start), defer_tm);
-				//printk (KERN_INFO "current time %lu, executing start %lu ns, the executing time is %lu ns, the defer time is %lu ns for psandbox %d, current psandbox %d\n",timespec64_to_ns(&current_tm),timespec64_to_ns(&cur->psandbox->activity->execution_start),timespec64_to_ns(&executing_tm),timespec64_to_ns(&defer_tm), cur->psandbox->bid, psandbox->bid);
+//				printk (KERN_INFO "current time %lu, executing start %lu ns, the executing time is %lu ns, the defer time is %lu ns for psandbox %d, current psandbox %d\n",timespec64_to_ns(&current_tm),timespec64_to_ns(&cur->psandbox->activity->execution_start),timespec64_to_ns(&executing_tm),timespec64_to_ns(&defer_tm), cur->psandbox->bid, psandbox->bid);
 				current_defer = timespec64_to_ns(&defer_tm);
 				current_execution = timespec64_to_ns(&executing_tm);
 				switch (cur->psandbox->rule.type) {
@@ -372,77 +316,21 @@ SYSCALL_DEFINE1(update_event, BoxEvent __user *, event) {
 		}
 		read_unlock(&competitors_lock);
 
-		if (penalty_ns > 10000 && victim) {
-			StatisticNode *stat_node = NULL;
-			ktime_t old_slack = victim->total_defer_time;
-			ktime_t new_slack = victim->total_execution_time;
-
-			read_lock(&stat_map_lock);
-			hash_for_each_possible_safe (stat_map, stat_cur, tmp, node, key) {
-				if (stat_cur->psandbox == victim) {
-					stat_node = stat_cur;
-					break;
-				}
-			}
-			read_unlock(&stat_map_lock);
-
-			if(!stat_node) {
-				pr_info("Can't find the psandbox %ld in the stat map\n",victim->bid);
-			}
-
-			if (stat_node->bad_action && stat_node->bad_action > BASE_RATE)
-				penalty_ns *= stat_node->bad_action / BASE_RATE;
-
-			victim->state = BOX_AWAKE;
-			wake_up_process(victim->current_task);
-			__set_current_state(TASK_INTERRUPTIBLE);
-
-			if (penalty_ns > 1000000000) {
-				penalty_ns = 1000000000;
-//				pr_info("event: sleep psandbox %d, thread %d, defer time %u, score %d\n", psandbox->bid, current->pid, penalty_ns,stat_node->bad_action);
-				schedule_hrtimeout(&penalty_ns,HRTIMER_MODE_REL);
+		if (is_lazy) {
+			if (penalty_ns > 10000 && victim) {
+				psandbox->activity->victim_id = victim->current_task->pid;
+				psandbox->activity->key = key;
+				psandbox->activity->penalty_ns = penalty_ns;
+				return penalty_ns;
 			} else {
-//				pr_info("event: sleep psandbox %d, thread %d, defer time %u, score %d\n", psandbox->bid, current->pid, penalty_ns,stat_node->bad_action);
-				schedule_hrtimeout(&penalty_ns,HRTIMER_MODE_REL);
+//				pr_info("the penalty is %lu\n",penalty_ns);
+				return 0;
 			}
 
+		}
 
-			new_slack *= victim->total_defer_time;
-			old_slack *= victim->total_execution_time;
-			switch (victim->rule.type) {
-				case RELATIVE:
-					if (victim->total_defer_time * 100 > victim->total_execution_time * victim->rule.isolation_level) {
-						spin_lock(&stat_node->stat_lock);
-						stat_node->bad_action++;
-						spin_unlock(&stat_node->stat_lock);
-					} else if (new_slack < old_slack)  {
-						spin_lock(&stat_node->stat_lock);
-						stat_node->bad_action++;
-						spin_unlock(&stat_node->stat_lock);
-					} else if (stat_node->bad_action > 1) {
-						spin_lock(&stat_node->stat_lock);
-						stat_node->bad_action--;
-						spin_unlock(&stat_node->stat_lock);
-					}
-					break;
-				case SCALABLE:
-					if (victim->total_defer_time * 100 > victim->total_execution_time * victim->rule.isolation_level * live_psandbox) {
-						spin_lock(&stat_node->stat_lock);
-						stat_node->bad_action++;
-						spin_unlock(&stat_node->stat_lock);
-					} else if (new_slack < old_slack) {
-						spin_lock(&stat_node->stat_lock);
-						stat_node->bad_action++;
-						spin_unlock(&stat_node->stat_lock);
-					} else if (stat_node->bad_action > 1) {
-						spin_lock(&stat_node->stat_lock);
-						stat_node->bad_action--;
-						spin_unlock(&stat_node->stat_lock);
-					}
-					break;
-				default:
-					break;
-			}
+		if (penalty_ns > 10000 && victim) {
+			do_penalty(victim,penalty_ns, key);
 		}
 		break;
 	}
@@ -451,8 +339,80 @@ SYSCALL_DEFINE1(update_event, BoxEvent __user *, event) {
 
 	return 0;
 }
+// TODO: add delay penalty
+void do_penalty(PSandbox *victim, ktime_t penalty_ns, int key) {
+	StatisticNode *stat_node = NULL;
+	StatisticNode *stat_cur = NULL;
+	struct hlist_node *tmp;
+	ktime_t old_slack = victim->total_defer_time;
+	ktime_t new_slack = victim->total_execution_time;
+	read_lock(&stat_map_lock);
+	hash_for_each_possible_safe (stat_map, stat_cur, tmp, node, key) {
+		if (stat_cur->psandbox == victim) {
+			stat_node = stat_cur;
+			break;
+		}
+	}
+	read_unlock(&stat_map_lock);
 
+	if(!stat_node) {
+		pr_info("Can't find the psandbox %ld in the stat map\n",victim->bid);
+		return;
+	}
 
+	if (stat_node->bad_action && stat_node->bad_action > BASE_RATE)
+		penalty_ns *= stat_node->bad_action / BASE_RATE;
+
+	victim->state = BOX_AWAKE;
+	wake_up_process(victim->current_task);
+	__set_current_state(TASK_INTERRUPTIBLE);
+
+	if (penalty_ns > 10000000000) {
+		penalty_ns = 10000000000;
+//		pr_info("event: sleep psandbox %d, thread %d, defer time %u, score %d\n", current->psandbox->bid, current->pid, penalty_ns,stat_node->bad_action);
+		schedule_hrtimeout(&penalty_ns,HRTIMER_MODE_REL);
+	} else {
+//		pr_info("event: sleep psandbox %d, thread %d, defer time %u, score %d\n", current->psandbox->bid, current->pid, penalty_ns,stat_node->bad_action);
+		schedule_hrtimeout(&penalty_ns,HRTIMER_MODE_REL);
+	}
+
+	new_slack *= victim->total_defer_time;
+	old_slack *= victim->total_execution_time;
+	switch (victim->rule.type) {
+	case RELATIVE:
+		if (victim->total_defer_time * 100 > victim->total_execution_time * victim->rule.isolation_level) {
+			spin_lock(&stat_node->stat_lock);
+			stat_node->bad_action++;
+			spin_unlock(&stat_node->stat_lock);
+		} else if (new_slack < old_slack)  {
+			spin_lock(&stat_node->stat_lock);
+			stat_node->bad_action++;
+			spin_unlock(&stat_node->stat_lock);
+		} else if (stat_node->bad_action > 1) {
+			spin_lock(&stat_node->stat_lock);
+			stat_node->bad_action--;
+			spin_unlock(&stat_node->stat_lock);
+		}
+		break;
+		case SCALABLE:
+			if (victim->total_defer_time * 100 > victim->total_execution_time * victim->rule.isolation_level * live_psandbox) {
+				spin_lock(&stat_node->stat_lock);
+				stat_node->bad_action++;
+				spin_unlock(&stat_node->stat_lock);
+			} else if (new_slack < old_slack) {
+				spin_lock(&stat_node->stat_lock);
+				stat_node->bad_action++;
+				spin_unlock(&stat_node->stat_lock);
+			} else if (stat_node->bad_action > 1) {
+				spin_lock(&stat_node->stat_lock);
+				stat_node->bad_action--;
+				spin_unlock(&stat_node->stat_lock);
+			}
+			break;
+			default:
+				break;
+	}
+}
 
 SYSCALL_DEFINE0(get_current_psandbox)
 {
@@ -558,6 +518,15 @@ SYSCALL_DEFINE1(bind_psandbox, int, addr)
 	return psandbox->current_task->pid;
 }
 
+SYSCALL_DEFINE2(penalize_psandbox, long int, penalty_us, int, key)
+{
+	ktime_t penalty = penalty_us * 1000;
+	PSandbox *psandbox = find_get_task_by_vpid(current->psandbox->activity->victim_id)->psandbox;
+	do_penalty(psandbox,penalty_us,key);
+
+	return 0;
+}
+
 int do_unbind(int addr){
 	PSandboxNode *a = NULL;
 	int i;
@@ -624,6 +593,11 @@ void do_freeze_psandbox(PSandbox *psandbox){
 //	if (timespec64_to_ns(&psandbox->activity->execution_time) * psandbox->delay_ratio * live_psandbox < defer_tm) {
 //		psandbox->bad_activities++;
 //	}
+	if (psandbox->activity->victim_id && psandbox->activity->key) {
+		PSandbox *victim = find_get_task_by_vpid(psandbox->activity->victim_id)->psandbox;
+		do_penalty(victim,psandbox->activity->penalty_ns,psandbox->activity->key);
+	}
+
 
 	memset(psandbox->activity, 0, sizeof(Activity));
 }
@@ -635,8 +609,8 @@ void clean_psandbox(PSandbox *psandbox) {
 	StatisticNode *stat_cur;
 	struct delaying_start *pos,*temp;
 	if (psandbox->finished_activities > 0) {
-		pr_info( "psandbox syscall called psandbox_release id =%ld by the thread %d, average syscall %ld, total unhold %d, competitor %d\n",
-		       psandbox->bid, current->pid,psandbox->count/psandbox->finished_activities,psandbox->unhold/psandbox->finished_activities,psandbox->competitor/psandbox->finished_activities);
+		pr_info( "psandbox syscall called psandbox_release id =%ld by the thread %d, total defer time %llu, total execution time %llu\n",
+		       psandbox->bid, current->pid,psandbox->total_defer_time, psandbox->total_execution_time);
 	} else {
 		pr_info("psandbox syscall called psandbox_release id =%ld by the thread %d\n",
 		       psandbox->bid, current->pid);

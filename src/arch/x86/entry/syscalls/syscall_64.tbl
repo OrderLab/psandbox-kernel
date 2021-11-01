@@ -369,6 +369,7 @@
 445	common	update_event		__x64_sys_update_event
 446	common	unbind_psandbox		__x64_sys_unbind_psandbox
 447	common	bind_psandbox		__x64_sys_bind_psandbox
+448	common  penalize_psandbox 	__x64_sys_penalize_psandbox
 
 
 #

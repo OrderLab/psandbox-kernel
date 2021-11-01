@@ -67,6 +67,9 @@ typedef struct activity {
 	struct timespec64 last_unbind_start;
 	struct timespec64 unbind_time;
 	int try_number;
+	int victim_id;
+	ktime_t penalty_ns;
+	int key;
 } Activity;
 
 typedef struct white_list {
@@ -117,6 +120,7 @@ struct psandbox_info {
 	struct list_head delay_list;
 	int is_lazy;
 	u64 addr;
+
 	// Debug
 	int is_futex;
 	long int count;
@@ -126,6 +130,7 @@ struct psandbox_info {
 
 extern long int live_psandbox;
 
+void do_penalty(PSandbox *victim, ktime_t penalty_ns, int key) ;
 void do_freeze_psandbox(PSandbox *psandbox);
 void clean_psandbox(PSandbox *psandbox);
 void clean_unbind_psandbox(struct task_struct *task);
