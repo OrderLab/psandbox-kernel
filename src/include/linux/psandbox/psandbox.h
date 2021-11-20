@@ -53,6 +53,8 @@ enum enum_activity_state {
 	ACTIVITY_WAITING,ACTIVITY_ENTER,ACTIVITY_EXIT,ACTIVITY_PREEMPTED,ACTIVITY_PROMOTED
 };
 
+
+
 struct delaying_start {
 	struct timespec64 delaying_start;
 	u64 key;
@@ -130,7 +132,7 @@ struct psandbox_info {
 
 extern long int live_psandbox;
 
-void do_penalty(PSandbox *victim, ktime_t penalty_ns, int key) ;
+void do_penalty(PSandbox *victim, ktime_t penalty_ns, unsigned int key) ;
 void do_freeze_psandbox(PSandbox *psandbox);
 void clean_psandbox(PSandbox *psandbox);
 void clean_unbind_psandbox(struct task_struct *task);

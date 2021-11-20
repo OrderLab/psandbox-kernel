@@ -1682,14 +1682,14 @@ out:
 		set_current_state(TASK_INTERRUPTIBLE);
 		psandbox->activity->defer_time.tv_nsec = 0;
 		psandbox->activity->defer_time.tv_sec = 0;
-		if(defer_tm < 100000)
-			pr_info("do sleep for psandbox %ld, thread %d, defer time %llu\n", psandbox->bid, current->pid, defer_tm);
+
 		if (defer_tm > 1000000) {
 //			pr_info("do sleep for psandbox %d, thread %d, defer time %u\n", psandbox->bid, current->pid, defer_tm);
-			defer_tm = 1000000;
+//			defer_tm = 1000000;
 			schedule_hrtimeout(&defer_tm, HRTIMER_MODE_REL);
 		} else {
 //			pr_info("do sleep for psandbox %d, thread %d, defer time %u\n", psandbox->bid, current->pid, defer_tm);
+			defer_tm = 1000000;
 			schedule_hrtimeout(&defer_tm, HRTIMER_MODE_REL);
 		}
 
@@ -2797,6 +2797,7 @@ retry:
 		list_for_each_entry(whiteAddr,current->psandbox->white_list,list) {
 			printk(KERN_INFO "enter the white list\n");
 			if (whiteAddr->addr == uaddr) {
+				printk(KERN_INFO "enter the white list for cache_lock %d\n",uaddr);
 				current->psandbox->is_white = 1;
 			}
 		}
