@@ -425,7 +425,7 @@ SYSCALL_DEFINE0(get_current_psandbox)
 	return current->psandbox->bid;
 }
 
-SYSCALL_DEFINE1(get_psandbox, int, addr)
+SYSCALL_DEFINE1(get_psandbox, size_t, addr)
 {
 	PSandbox *psandbox = NULL;
 	PSandboxNode *cur;
@@ -443,7 +443,10 @@ SYSCALL_DEFINE1(get_psandbox, int, addr)
 		return -1;
 	}
 
-	return psandbox->current_task->pid;
+	//XXX psandbox->current_task is a NULL ptr for sure, 
+	// so let's just use bid instead, 
+	// ... or return 0 which both can be confusing considering the naming
+	return psandbox->bid;
 }
 
 SYSCALL_DEFINE2(annotate_resource, u32 __user *, uaddr, int, action_type) {
@@ -455,24 +458,29 @@ SYSCALL_DEFINE2(annotate_resource, u32 __user *, uaddr, int, action_type) {
 	return 0;
 }
 
-SYSCALL_DEFINE1(unbind_psandbox, u64, addr)
+SYSCALL_DEFINE2(unbind_psandbox, size_t, addr, bool, isLazy)
 {
 	PSandbox *psandbox = current->psandbox;
+	pid_t pid = psandbox->current_task->pid;
 
 	if (!psandbox) {
 		printk(KERN_INFO "can't find psandbox to unbind\n");
 		return -1;
 	}
-	psandbox->is_lazy = 1;
+	psandbox->is_lazy = isLazy;
 	current->is_psandbox = 0;
 	psandbox->task_key =  addr;
 	ktime_get_real_ts64(&psandbox->activity->last_unbind_start);
 	do_freeze_psandbox(psandbox);
 //	printk(KERN_INFO "lazy unbind psandbox %d to addr %d\n", psandbox->bid,addr);
-	return psandbox->current_task->pid;
+	if (!isLazy) {
+		do_unbind(addr ? 0 : 1);
+	}
+
+	return pid;
 }
 
-SYSCALL_DEFINE1(bind_psandbox, int, addr)
+SYSCALL_DEFINE1(bind_psandbox, size_t, addr)
 {
 	PSandbox *psandbox = NULL;
 	PSandboxNode *cur;
@@ -540,7 +548,7 @@ SYSCALL_DEFINE2(penalize_psandbox, long int, penalty_us,unsigned int, key)
 	return 0;
 }
 
-int do_unbind(int addr){
+int do_unbind(size_t addr){
 	PSandboxNode *a = NULL;
 	int i;
 	PSandbox *psandbox = current->psandbox;
