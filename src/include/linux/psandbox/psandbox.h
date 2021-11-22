@@ -122,7 +122,7 @@ struct psandbox_info {
 	struct list_head delay_list;
 	int is_lazy;
 	u64 addr;
-
+	int is_nice;
 	// Debug
 	int is_futex;
 	long int count;

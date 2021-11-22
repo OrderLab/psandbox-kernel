@@ -75,6 +75,7 @@ SYSCALL_DEFINE3(create_psandbox, int, type, int, isolation_level, int, priority)
 	psandbox->rule.type = type;
 	psandbox->rule.isolation_level = isolation_level;
 	psandbox->priority = priority;
+	psandbox->is_nice = 0;
         spin_lock_init(&psandbox->lock);
 	INIT_LIST_HEAD(&psandbox->delay_list);
 
@@ -248,6 +249,7 @@ SYSCALL_DEFINE2(update_event, BoxEvent __user *, event, int, is_lazy) {
 		PSandbox *victim = NULL;
 		psandbox->unhold++;
 		psandbox->activity->activity_state = ACTIVITY_EXIT;
+
 		// calculating the defering time
 		int count = 0;
 		read_lock(&competitors_lock);
@@ -262,10 +264,11 @@ SYSCALL_DEFINE2(update_event, BoxEvent __user *, event, int, is_lazy) {
 				count++;
 				switch (cur->psandbox->rule.type) {
 					case RELATIVE:
+
 						if (cur->psandbox->average_defer_time * 100  < cur->psandbox->average_execution_time * cur->psandbox->rule.isolation_level ) {
 							continue;
 						}
-						pr_info("after call continues %ld, defer time %llu, execution time %llu\n", cur->psandbox->bid,cur->psandbox->average_defer_time, cur->psandbox->average_execution_time);
+//						pr_info("after call continues %ld, defer time %llu, execution time %llu\n", cur->psandbox->bid,cur->psandbox->average_defer_time, cur->psandbox->average_execution_time);
 						break;
 					case SCALABLE:
 						if (cur->psandbox->average_defer_time * 100  < cur->psandbox->average_execution_time * cur->psandbox->rule.isolation_level * live_psandbox) {
@@ -321,7 +324,7 @@ SYSCALL_DEFINE2(update_event, BoxEvent __user *, event, int, is_lazy) {
 				psandbox->activity->victim_id = victim->current_task->pid;
 				psandbox->activity->key = key;
 				psandbox->activity->penalty_ns = penalty_ns;
-				pr_info("call do update %d, victim id %d, key %lu \n",psandbox->bid,psandbox->activity->victim_id,psandbox->activity->key);
+//				pr_info("call do update %d, victim id %d, key %lu \n",psandbox->bid,psandbox->activity->victim_id,psandbox->activity->key);
 				return penalty_ns;
 			} else {
 				pr_info("the penalty is %lu\n",penalty_ns);
@@ -616,6 +619,27 @@ void do_freeze_psandbox(PSandbox *psandbox){
 				do_penalty(victim,psandbox->activity->penalty_ns,psandbox->activity->key);
 		}
 	}
+//
+//	switch (psandbox->rule.type) {
+//		case ABSOLUTE:
+//			if (timespec64_to_ns(&total_time) > psandbox->rule.isolation_level ) {
+////			pr_info("after call freeze %ld, defer time %llu, execution time %llu\n", psandbox->bid,psandbox->average_defer_time, psandbox->average_execution_time);
+//			if (psandbox->is_nice == 0 && psandbox->bid == 7) {
+//				psandbox->is_nice = 1;
+//				pr_info("call nice for psandbox %d, nice is %d\n",psandbox->bid,task_nice(psandbox->current_task));
+//				set_user_nice(psandbox->current_task,19);
+//			}
+//		} else {
+//			if (psandbox->is_nice == 1) {
+//				pr_info("end nice for psandbox %d\n",psandbox->bid);
+//				psandbox->is_nice = 0;
+//				set_user_nice(psandbox->current_task,task_nice(psandbox->current_task)-1);
+//			}
+//
+//		}
+//		break;
+//		default: break;
+//	}
 
 	memset(psandbox->activity, 0, sizeof(Activity));
 }
