@@ -68,6 +68,9 @@ typedef struct activity {
 	struct timespec64 execution_time;
 	struct timespec64 last_unbind_start;
 	struct timespec64 unbind_time;
+	struct timespec64 last_queue_in; //XXX unused
+	struct timespec64 expected_queue_out;
+	struct timespec64 requeue_start;
 	int try_number;
 	int victim_id;
 	ktime_t penalty_ns;
@@ -108,6 +111,8 @@ struct psandbox_info {
 	ktime_t total_defer_time;
 	ktime_t average_defer_time;
 	ktime_t average_execution_time;
+	ktime_t last_unbind_time; //XXX remove
+	ktime_t last_queue_time;
 	IsolationRule rule; // the rule for isolation
 	int priority;
 	struct list_head *white_list;
@@ -121,6 +126,8 @@ struct psandbox_info {
 	PSandboxNode competitors[COMPETITORS_SIZE];
 	struct list_head delay_list;
 	int is_lazy;
+	int is_accept;
+	int requeued;
 	u64 addr;
 
 	// Debug
@@ -137,5 +144,8 @@ void do_freeze_psandbox(PSandbox *psandbox);
 void clean_psandbox(PSandbox *psandbox);
 void clean_unbind_psandbox(struct task_struct *task);
 PSandbox *get_psandbox(int bid);
+// PSandbox *get_psandbox_unbind(u64 addr);
+PSandbox *get_unbind_psandbox(size_t addr);
+// int do_unbind(u64 addr);
 int do_unbind(size_t addr);
 #endif //LINUX_5_4_PSANDBOX_H
