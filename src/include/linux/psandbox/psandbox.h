@@ -74,6 +74,7 @@ typedef struct activity {
 	int try_number;
 	int victim_id;
 	ktime_t penalty_ns;
+	ktime_t adjust_ns;
 	int key;
 } Activity;
 

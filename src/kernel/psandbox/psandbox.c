@@ -367,8 +367,6 @@ void do_penalty(PSandbox *victim, ktime_t penalty_ns, unsigned int key) {
 	if (stat_node->bad_action && stat_node->bad_action > BASE_RATE)
 		penalty_ns *= stat_node->bad_action / BASE_RATE;
 	
-	//XXX another do penalty... starts here...
-	// explain here
 
 	victim->state = BOX_AWAKE;
 	wake_up_process(victim->current_task);
@@ -623,9 +621,16 @@ void do_freeze_psandbox(PSandbox *psandbox){
 	psandbox->total_execution_time += timespec64_to_ns(&psandbox->activity->execution_time);
 
 	psandbox->last_unbind_time = timespec64_to_ns(&psandbox->activity->unbind_time);
-	// psandbox->last_unbind_time = psandbox->activity->unbind_time.tv_sec;
 	last_unbind_start = psandbox->activity->last_unbind_start;
-	// expected_queue_out = psandbox->activity->expected_queue_out;
+
+	//adjust actual execution time
+	if (psandbox->total_execution_time > psandbox->activity->adjust_ns) {
+		psandbox->total_execution_time -= psandbox->activity->adjust_ns;
+		psandbox->average_execution_time = psandbox->total_execution_time/psandbox->finished_activities;
+	} else {
+		psandbox->total_execution_time = 0;
+		psandbox->average_execution_time = 0;
+	}
 
 	defer_tm = timespec64_to_ns(&psandbox->activity->defer_time);
 	psandbox->total_defer_time += defer_tm;
@@ -652,7 +657,6 @@ void do_freeze_psandbox(PSandbox *psandbox){
 
 	memset(psandbox->activity, 0, sizeof(Activity));
 	psandbox->activity->last_unbind_start = last_unbind_start;
-	// psandbox->activity->expected_queue_out = expected_queue_out;
 }
 
 void clean_psandbox(PSandbox *psandbox) {

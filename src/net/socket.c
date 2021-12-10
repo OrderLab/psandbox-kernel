@@ -104,6 +104,10 @@
 #include <net/busy_poll.h>
 #include <linux/errqueue.h>
 
+/* Psandbox change */
+#include <linux/time.h>
+#include <linux/psandbox/psandbox.h>
+
 #ifdef CONFIG_NET_RX_BUSY_POLL
 unsigned int sysctl_net_busy_read __read_mostly;
 unsigned int sysctl_net_busy_poll __read_mostly;
@@ -1836,6 +1840,37 @@ out:
 SYSCALL_DEFINE3(connect, int, fd, struct sockaddr __user *, uservaddr,
 		int, addrlen)
 {
+	// PSandbox changes
+	struct timespec64 tm1, tm2, tm;
+	ktime_t penalty_ns, tm_ns;
+	PSandbox *psandbox = current->psandbox;
+	if (psandbox) {
+		switch(psandbox->rule.type) {
+		case ABSOLUTE:
+			penalty_ns = psandbox->rule.isolation_level; //XXX assume ns 
+			break;
+		case RELATIVE:
+			penalty_ns = 
+				psandbox->average_execution_time / 100 * psandbox->rule.isolation_level;
+			break;
+		case SCALABLE:
+			printk(KERN_INFO "Fail to handle isolation rule scalable.");
+			break;
+		}
+
+		if (penalty_ns > 1000000000) {
+			penalty_ns = 
+					penalty_ns >= 1000000000 * 10 ? 
+						1000000000 * 10 : penalty_ns;
+			__set_current_state(TASK_INTERRUPTIBLE);
+			schedule_hrtimeout(&penalty_ns, HRTIMER_MODE_REL);
+
+			psandbox->activity->adjust_ns = penalty_ns;
+			psandbox->total_defer_time += penalty_ns;
+			psandbox->average_defer_time = penalty_ns/psandbox->finished_activities;
+		}
+	}
+
 	return __sys_connect(fd, uservaddr, addrlen);
 }
 
