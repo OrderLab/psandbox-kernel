@@ -513,7 +513,12 @@ struct sock *inet_csk_accept(struct sock *sk, int flags, int *err, bool kern)
 		psandbox = NULL;
 
 		psandbox = get_unbind_psandbox(addr);
-		cond_resched();
+		// cond_resched();
+
+		// if (addr == 2658904256) {
+		// 	ktime_get_real_ts64(&current_tm);
+		// 	printk(KERN_INFO "+++++ OUT QUEUE %llu, %llu", addr, current_tm.tv_sec);
+		// }
 
 		if (!psandbox) 
 			break;
@@ -528,7 +533,7 @@ struct sock *inet_csk_accept(struct sock *sk, int flags, int *err, bool kern)
 		ktime_get_real_ts64(&current_tm);
 		current_tm_ns = timespec64_to_ns(&current_tm);
 		expected_out_tm_ns = timespec64_to_ns(&psandbox->activity->expected_queue_out);
-		cond_resched();
+		// cond_resched();
 		if (expected_out_tm_ns <= current_tm_ns && psandbox->requeued) {
 			ktime_get_real_ts64(&current_tm);
 			tm = timespec64_sub(current_tm, psandbox->activity->last_queue_in);
@@ -538,7 +543,7 @@ struct sock *inet_csk_accept(struct sock *sk, int flags, int *err, bool kern)
 			psandbox->total_defer_time += timespec64_to_ns(&tm);
 			psandbox->average_defer_time = psandbox->total_defer_time/psandbox->finished_activities;
 			psandbox->requeued = 0;
-			cond_resched();
+			// cond_resched();
 			break;
 		}
 
@@ -557,7 +562,7 @@ struct sock *inet_csk_accept(struct sock *sk, int flags, int *err, bool kern)
 			}
 			// printk(KERN_INFO "+++++ NOT YET REQUEUE %llu, %llu", psandbox->task_key, psandbox->average_execution_time);
 
-			cond_resched();
+			// cond_resched();
 
 			if (add_tm_us <= 1000000000) 
 				break;
@@ -566,11 +571,11 @@ struct sock *inet_csk_accept(struct sock *sk, int flags, int *err, bool kern)
 			else
 				add_tm_us = add_tm_us;
 
-			cond_resched();
+			// cond_resched();
 			tm = ns_to_timespec64(add_tm_us);
 			psandbox->activity->expected_queue_out = timespec64_add(current_tm, tm);
 			ktime_get_real_ts64(&psandbox->activity->requeue_start);
-			cond_resched();
+			// cond_resched();
 		}
 
 
@@ -1066,6 +1071,13 @@ struct sock *inet_csk_reqsk_queue_add(struct sock *sk,
 		// // signed int addr = child->sk_daddr;
 		// size_t addr = child->sk_daddr;
 		// // printk(KERN_INFO "!!!! YO sk_daddr %d\n", child->sk_daddr);
+
+		// size_t addr = child->sk_daddr;
+		// if (addr == 2658904256) {
+		// 	struct timespec64 current_tm;
+		// 	ktime_get_real_ts64(&current_tm);
+		// 	printk(KERN_INFO "+++++ IN QUEUE %llu, %llu", addr, current_tm.tv_sec);
+		// }
 
 
 		// PSandbox *psandbox = NULL;

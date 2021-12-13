@@ -90,8 +90,8 @@ SYSCALL_DEFINE3(create_psandbox, int, type, int, isolation_level, int, priority)
 	
 	live_psandbox++;
 
-	printk(KERN_INFO "psandbox syscall called psandbox_create id =%ld by thread %d\n",
-	       psandbox->bid,current->pid);
+	// printk(KERN_INFO "psandbox syscall called psandbox_create id =%ld by thread %d\n",
+	//        psandbox->bid,current->pid);
 	return current->pid;
 }
 
@@ -666,11 +666,11 @@ void clean_psandbox(PSandbox *psandbox) {
 	StatisticNode *stat_cur;
 	struct delaying_start *pos,*temp;
 	if (psandbox->finished_activities > 0) {
-		pr_info( "psandbox syscall called psandbox_release id =%ld by the thread %d, total defer time %llu ns, total execution time %llu ns \n",
-		       psandbox->bid, current->pid,psandbox->total_defer_time, psandbox->total_execution_time);
+		// pr_info( "psandbox syscall called psandbox_release id =%ld by the thread %d, total defer time %llu ns, total execution time %llu ns \n",
+		//        psandbox->bid, current->pid,psandbox->total_defer_time, psandbox->total_execution_time);
 	} else {
-		pr_info("psandbox syscall called psandbox_release id =%ld by the thread %d\n",
-		       psandbox->bid, current->pid);
+		// pr_info("psandbox syscall called psandbox_release id =%ld by the thread %d\n",
+		//        psandbox->bid, current->pid);
 	}
 
 
