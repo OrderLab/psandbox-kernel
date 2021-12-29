@@ -327,7 +327,7 @@ SYSCALL_DEFINE2(update_event, BoxEvent __user *, event, int, is_lazy) {
 //				pr_info("call do update %d, victim id %d, key %lu \n",psandbox->bid,psandbox->activity->victim_id,psandbox->activity->key);
 				return penalty_ns;
 			} else {
-				pr_info("the penalty is %lu\n",penalty_ns);
+//				pr_info("the penalty is %lu\n",penalty_ns);
 				return 0;
 			}
 
@@ -364,8 +364,8 @@ void do_penalty(PSandbox *victim, ktime_t penalty_ns, unsigned int key) {
 		return;
 	}
 
-	if (stat_node->bad_action && stat_node->bad_action > BASE_RATE)
-		penalty_ns *= stat_node->bad_action / BASE_RATE;
+//	if (stat_node->bad_action && stat_node->bad_action > BASE_RATE)
+//		penalty_ns *= stat_node->bad_action / BASE_RATE;
 
 	victim->state = BOX_AWAKE;
 	wake_up_process(victim->current_task);
@@ -373,11 +373,11 @@ void do_penalty(PSandbox *victim, ktime_t penalty_ns, unsigned int key) {
 
 	if (penalty_ns > 10000000000) {
 		penalty_ns = 10000000000;
-		pr_info("event: sleep psandbox %d, thread %d, defer time %u, score %d\n", current->psandbox->bid, current->pid, penalty_ns,stat_node->bad_action);
+//		pr_info("event: sleep psandbox %d, thread %d, defer time %u, score %d\n", current->psandbox->bid, current->pid, penalty_ns,stat_node->bad_action);
 		schedule_hrtimeout(&penalty_ns,HRTIMER_MODE_REL);
 	} else {
 //		penalty_ns=2000000000;
-		pr_info("event: sleep psandbox %d, thread %d, defer time %u, score %d\n", current->psandbox->bid, current->pid, penalty_ns,stat_node->bad_action);
+//		pr_info("event: sleep psandbox %d, thread %d, defer time %u, score %d\n", current->psandbox->bid, current->pid, penalty_ns,stat_node->bad_action);
 		schedule_hrtimeout(&penalty_ns,HRTIMER_MODE_REL);
 	}
 
