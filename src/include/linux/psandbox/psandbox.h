@@ -72,6 +72,7 @@ typedef struct activity {
 	int victim_id;
 	ktime_t penalty_ns;
 	int key;
+	int c_resource_numbers;
 } Activity;
 
 typedef struct white_list {

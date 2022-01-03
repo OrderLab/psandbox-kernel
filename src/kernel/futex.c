@@ -1596,13 +1596,11 @@ futex_wake(u32 __user *uaddr, unsigned int flags, int nr_wake, u32 bitset)
 {
 	struct futex_hash_bucket *hb;
 	struct futex_q *this, *next;
-	PSandbox *psandbox = NULL;
-	struct timespec64 current_tm;
-	ktime_t defer_tm;
-	ktime_t executing_tm;
+	PSandbox *v_psandbox = NULL;
+	ktime_t penalty_ns;
 	union futex_key key = FUTEX_KEY_INIT;
 	int ret;
-	int flag = 0;
+	int is_noisy = 0;
 	DEFINE_WAKE_Q(wake_q);
 
 	if (!bitset)
@@ -1618,6 +1616,8 @@ futex_wake(u32 __user *uaddr, unsigned int flags, int nr_wake, u32 bitset)
 	if (!hb_waiters_pending(hb))
 		goto out_put_key;
 
+	if(current->psandbox)
+		current->psandbox->activity->c_resource_numbers--;
 	spin_lock(&hb->lock);
 
 
@@ -1632,38 +1632,47 @@ futex_wake(u32 __user *uaddr, unsigned int flags, int nr_wake, u32 bitset)
 			if (!(this->bitset & bitset))
 				continue;
 
-			if(current->psandbox && this->task && this->task->psandbox && this->task->psandbox->is_futex) {
-				psandbox = this->task->psandbox;
-				if (psandbox && psandbox->state != BOX_FREEZE && !psandbox->is_white) {
-					struct timespec64 current_tm;
+			//PSandbox change: give penalty to the noisy neighbor
+			v_psandbox = this->task->psandbox;
+			if(current->psandbox && this->task && v_psandbox && v_psandbox->is_futex) {
+
+				if (v_psandbox &&
+				    v_psandbox->state == BOX_ACTIVE && !v_psandbox->is_white) {
 					struct delaying_start *pos;
+					struct timespec64 current_tm,executing_tm,defer_tm;
+					ktime_t current_defer, current_execution;
 					ktime_get_real_ts64(&current_tm);
 
-					list_for_each_entry(pos,&psandbox->delay_list,list) {
+					list_for_each_entry(pos,&v_psandbox->delay_list,list) {
 						if (pos->key == (u64)uaddr) {
-//							pr_info("the delaying start is %ds,%ds. the execution start is %d,%d\n",pos->delaying_start.tv_sec,pos->delaying_start.tv_nsec, psandbox->activity->execution_start.tv_sec,psandbox->activity->execution_start.tv_nsec);
-							if (timespec64_compare(&pos->delaying_start,&psandbox->activity->execution_start) ){
-								current_tm = timespec64_sub(current_tm,pos->delaying_start);
-							} else {
-								current_tm.tv_nsec = 0;
-								current_tm.tv_sec = 0;
+//							pr_info("the delaying start is %ds,%ds. the execution start is %d,%d\n",pos->delaying_start.tv_sec,pos->delaying_start.tv_nsec, v_psandbox->activity->execution_start.tv_sec,v_psandbox->activity->execution_start.tv_nsec);
+							if (timespec64_compare(&pos->delaying_start,&v_psandbox->activity->execution_start) ){
+								defer_tm = timespec64_sub(current_tm,pos->delaying_start);
+								defer_tm = timespec64_sub(defer_tm,v_psandbox->activity->defer_time);
+								executing_tm = timespec64_sub(timespec64_sub(current_tm, v_psandbox->activity->execution_start), defer_tm);
+								current_defer = timespec64_to_ns(&defer_tm);
+								current_execution = timespec64_to_ns(&executing_tm);
+								switch (v_psandbox->rule.type) {
+								case RELATIVE:
+									if (current_defer * 100 > current_execution * v_psandbox->rule.isolation_level) {
+										is_noisy = true;
+										penalty_ns = current_defer;
+									}
+									break;
+								case SCALABLE:
+									if (current_defer * 100 >current_execution * v_psandbox->rule.isolation_level * live_psandbox) {
+										is_noisy = true;
+										penalty_ns = current_defer;
+									}
+									break;
+								default: break;
+								}
 							}
 						}
 					}
-					psandbox->activity->defer_time = timespec64_add(current_tm,psandbox->activity->defer_time);
-				} else if (psandbox && psandbox->state != BOX_FREEZE && psandbox->is_white) {
-					psandbox->is_white = 0;
+
 				}
 
-				if (psandbox && psandbox->state != BOX_FREEZE) {
-					defer_tm = timespec64_to_ktime(psandbox->activity->defer_time);
-					ktime_get_real_ts64(&current_tm);
-					executing_tm = timespec64_to_ktime(timespec64_sub(current_tm, psandbox->activity->execution_start));
-//					pr_info("the value is %dns\n",(executing_tm - defer_tm) * psandbox->delay_ratio * live_psandbox);
-					if (defer_tm > (executing_tm - defer_tm) * psandbox->delay_ratio * live_psandbox) {
-						flag = 1;
-					}
-				}
 			}
 
 			mark_wake_futex(&wake_q, this);
@@ -1678,19 +1687,19 @@ futex_wake(u32 __user *uaddr, unsigned int flags, int nr_wake, u32 bitset)
 out_put_key:
 	put_futex_key(&key);
 out:
-	if (current->psandbox && flag && current->psandbox->state != BOX_FREEZE && current->psandbox->activity && current->psandbox->is_futex) {
+	if (current->psandbox && is_noisy && current->psandbox->state == BOX_ACTIVE && current->psandbox->activity && current->psandbox->is_futex && current->psandbox->activity->c_resource_numbers < 1) {
 		set_current_state(TASK_INTERRUPTIBLE);
-		psandbox->activity->defer_time.tv_nsec = 0;
-		psandbox->activity->defer_time.tv_sec = 0;
+		v_psandbox->activity->defer_time.tv_nsec = 0;
+		v_psandbox->activity->defer_time.tv_sec = 0;
 
-		if (defer_tm > 1000000) {
-//			pr_info("do sleep for psandbox %d, thread %d, defer time %u\n", psandbox->bid, current->pid, defer_tm);
+		if (penalty_ns > 1000000) {
+//			pr_info("do sleep for v_psandbox %d, thread %d, defer time %u\n", v_psandbox->bid, current->pid, defer_tm);
 //			defer_tm = 1000000;
-			schedule_hrtimeout(&defer_tm, HRTIMER_MODE_REL);
+       			schedule_hrtimeout(&penalty_ns, HRTIMER_MODE_REL);
 		} else {
-//			pr_info("do sleep for psandbox %d, thread %d, defer time %u\n", psandbox->bid, current->pid, defer_tm);
-			defer_tm = 1000000;
-			schedule_hrtimeout(&defer_tm, HRTIMER_MODE_REL);
+//			pr_info("do sleep for v_psandbox %d, thread %d, defer time %u\n", v_psandbox->bid, current->pid, defer_tm);
+ 			penalty_ns = 1000000;
+ 			schedule_hrtimeout(&penalty_ns, HRTIMER_MODE_REL);
 		}
 
 	}
@@ -2771,6 +2780,7 @@ static int futex_wait(u32 __user *uaddr, unsigned int flags, u32 val,
 	struct restart_block *restart;
 	struct futex_hash_bucket *hb;
 	struct futex_q q = futex_q_init;
+	PSandbox *psandbox = current->psandbox;
 	int ret;
 
 	if (!bitset)
@@ -2790,18 +2800,19 @@ retry:
 
 	/* queue_me and wait for wakeup, timeout, or a signal. */
 	//Psandbox change
-	if(current->psandbox && current->psandbox->state != BOX_FREEZE && current->psandbox->is_futex && current->psandbox->white_list ) {
+	if(psandbox && psandbox->state == BOX_ACTIVE && psandbox->is_futex && psandbox->white_list) {
 		struct white_list *whiteAddr;
 		int is_first = true;
 		struct delaying_start *pos;
-		list_for_each_entry(whiteAddr,current->psandbox->white_list,list) {
+		list_for_each_entry(whiteAddr,psandbox->white_list,list) {
 			printk(KERN_INFO "enter the white list\n");
 			if (whiteAddr->addr == uaddr) {
-				printk(KERN_INFO "enter the white list for cache_lock %d\n",uaddr);
-				current->psandbox->is_white = 1;
+				printk(KERN_INFO "enter the white list for lock %d\n",uaddr);
+				psandbox->is_white = 1;
+				break;
 			}
 		}
-		if(!current->psandbox->is_white) {
+		if(!psandbox->is_white) {
 			list_for_each_entry(pos,&current->psandbox->delay_list,list) {
 				if (pos->key == (u64)uaddr) {
 					is_first = false;
@@ -2814,13 +2825,11 @@ retry:
 				delaying_start = (struct delaying_start *)kzalloc(sizeof(struct delaying_start),GFP_KERNEL);
 				ktime_get_real_ts64(&delaying_start->delaying_start);
 				delaying_start->key = (u64) uaddr;
-				list_add(&delaying_start->list,&current->psandbox->delay_list);
+				list_add(&delaying_start->list,&psandbox->delay_list);
 			}
-			current->psandbox->activity->activity_state = ACTIVITY_WAITING;
+			psandbox->activity->activity_state = ACTIVITY_WAITING;
 		}
 	}
-
-
 
 	futex_wait_queue_me(hb, &q, to);
 
@@ -2859,6 +2868,16 @@ out:
 		hrtimer_cancel(&to->timer);
 		destroy_hrtimer_on_stack(&to->timer);
 	}
+	if( psandbox && psandbox->state == BOX_ACTIVE && psandbox->is_futex) {
+		struct timespec64 current_tm,defer_tm;
+		psandbox->activity->activity_state = ACTIVITY_ENTER;
+		psandbox->is_white = 0;
+		current_tm = psandbox->activity->defer_time;
+		psandbox->activity->defer_time = timespec64_add(defer_tm, current_tm);
+		psandbox->activity->defer_time = timespec64_add(current_tm, psandbox->activity->defer_time);
+		psandbox->activity->c_resource_numbers++;
+	}
+
 	return ret;
 }
 

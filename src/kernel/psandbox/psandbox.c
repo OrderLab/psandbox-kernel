@@ -237,7 +237,7 @@ SYSCALL_DEFINE2(update_event, BoxEvent __user *, event, int, is_lazy) {
 		if(defer_tm.tv_sec == -1) {
 			printk (KERN_INFO "can't find the key for delaying start for psandbox %ld\n", psandbox->bid);
 		}
-
+		psandbox->activity->c_resource_numbers++;
 		current_tm = psandbox->activity->defer_time;
 		psandbox->activity->defer_time = timespec64_add(defer_tm, current_tm);
 		break;
@@ -249,7 +249,7 @@ SYSCALL_DEFINE2(update_event, BoxEvent __user *, event, int, is_lazy) {
 		PSandbox *victim = NULL;
 		psandbox->unhold++;
 		psandbox->activity->activity_state = ACTIVITY_EXIT;
-
+		psandbox->activity->c_resource_numbers--;
 		// calculating the defering time
 		int count = 0;
 		read_lock(&competitors_lock);
@@ -257,14 +257,13 @@ SYSCALL_DEFINE2(update_event, BoxEvent __user *, event, int, is_lazy) {
 			int is_noisy = false;
 
 			if (psandbox->action_level != LOW_PRIORITY)
-				break;
+				continue;
 
 			defer_tm.tv_sec = -1;
 			if (cur->psandbox->bid != psandbox->bid) {
 				count++;
 				switch (cur->psandbox->rule.type) {
 					case RELATIVE:
-
 						if (cur->psandbox->average_defer_time * 100  < cur->psandbox->average_execution_time * cur->psandbox->rule.isolation_level ) {
 							continue;
 						}
@@ -278,13 +277,15 @@ SYSCALL_DEFINE2(update_event, BoxEvent __user *, event, int, is_lazy) {
 						break;
 					default: break;
 				}
+
 				ktime_get_real_ts64(&current_tm);
 				defer_tm = timespec64_sub(current_tm,cur->delaying_start);
+				defer_tm = timespec64_sub(defer_tm,cur->psandbox->activity->defer_time);
 
 				if (defer_tm.tv_sec == -1) {
 					pr_info("2. can't find the key for delaying start for psandbox %ld\n", psandbox->bid);
 				}
-				executing_tm = timespec64_sub(timespec64_sub(current_tm, cur->psandbox->activity ->execution_start), defer_tm);
+				executing_tm = timespec64_sub(timespec64_sub(current_tm, cur->psandbox->activity->execution_start), defer_tm);
 //				pr_info ("current time %lu, executing start %lu ns, the executing time is %lu ns, the defer time is %lu ns for psandbox %d, current psandbox %d\n",timespec64_to_ns(&current_tm),timespec64_to_ns(&cur->psandbox->activity->execution_start),timespec64_to_ns(&executing_tm),timespec64_to_ns(&defer_tm), cur->psandbox->bid, psandbox->bid);
 				current_defer = timespec64_to_ns(&defer_tm);
 				current_execution = timespec64_to_ns(&executing_tm);
@@ -308,7 +309,7 @@ SYSCALL_DEFINE2(update_event, BoxEvent __user *, event, int, is_lazy) {
 					if (current_defer * old_execution > old_defer * current_execution) {
 						old_defer = current_defer;
 						old_execution = current_execution;
-						penalty_ns = current_defer ;
+						penalty_ns = current_defer;
 						victim = cur->psandbox;
 					}
 				}
@@ -333,7 +334,7 @@ SYSCALL_DEFINE2(update_event, BoxEvent __user *, event, int, is_lazy) {
 
 		}
 
-		if (penalty_ns > 10000 && victim) {
+		if (penalty_ns > 10000 && victim && psandbox->activity->c_resource_numbers < 1) {
 			do_penalty(victim,penalty_ns, key);
 		}
 		break;
@@ -367,7 +368,7 @@ void do_penalty(PSandbox *victim, ktime_t penalty_ns, unsigned int key) {
 //	if (stat_node->bad_action && stat_node->bad_action > BASE_RATE)
 //		penalty_ns *= stat_node->bad_action / BASE_RATE;
 
-	victim->state = BOX_AWAKE;
+//	victim->state = BOX_AWAKE;
 	wake_up_process(victim->current_task);
 	__set_current_state(TASK_INTERRUPTIBLE);
 
