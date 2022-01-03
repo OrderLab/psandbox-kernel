@@ -65,7 +65,7 @@ SYSCALL_DEFINE3(create_psandbox, int, type, int, isolation_level, int, priority)
 	psandbox->action_level = LOW_PRIORITY;
 	psandbox->is_white = 0;
 	psandbox->delay_ratio = 1;
-	psandbox->is_futex = 0;
+	psandbox->is_futex =1;
 	psandbox->tail_requirement = 90;
 	psandbox->bad_activities = 0;
 	psandbox->creator_psandbox = current;
@@ -283,7 +283,7 @@ SYSCALL_DEFINE2(update_event, BoxEvent __user *, event, int, is_lazy) {
 				defer_tm = timespec64_sub(defer_tm,cur->psandbox->activity->defer_time);
 
 				if (defer_tm.tv_sec == -1) {
-					pr_info("2. can't find the key for delaying start for psandbox %ld\n", psandbox->bid);
+				//	pr_info("2. can't find the key for delaying start for psandbox %ld\n", psandbox->bid);
 				}
 				executing_tm = timespec64_sub(timespec64_sub(current_tm, cur->psandbox->activity->execution_start), defer_tm);
 //				pr_info ("current time %lu, executing start %lu ns, the executing time is %lu ns, the defer time is %lu ns for psandbox %d, current psandbox %d\n",timespec64_to_ns(&current_tm),timespec64_to_ns(&cur->psandbox->activity->execution_start),timespec64_to_ns(&executing_tm),timespec64_to_ns(&defer_tm), cur->psandbox->bid, psandbox->bid);
@@ -374,11 +374,11 @@ void do_penalty(PSandbox *victim, ktime_t penalty_ns, unsigned int key) {
 
 	if (penalty_ns > 10000000000) {
 		penalty_ns = 10000000000;
-//		pr_info("event: sleep psandbox %d, thread %d, defer time %u, score %d\n", current->psandbox->bid, current->pid, penalty_ns,stat_node->bad_action);
+		pr_info("event: sleep psandbox %d, thread %d, defer time %u, score %d\n", current->psandbox->bid, current->pid, penalty_ns,stat_node->bad_action);
 		schedule_hrtimeout(&penalty_ns,HRTIMER_MODE_REL);
 	} else {
 //		penalty_ns=2000000000;
-//		pr_info("event: sleep psandbox %d, thread %d, defer time %u, score %d\n", current->psandbox->bid, current->pid, penalty_ns,stat_node->bad_action);
+		pr_info("event: sleep psandbox %d, thread %d, defer time %u, score %d\n", current->psandbox->bid, current->pid, penalty_ns,stat_node->bad_action);
 		schedule_hrtimeout(&penalty_ns,HRTIMER_MODE_REL);
 	}
 

@@ -1688,18 +1688,18 @@ out_put_key:
 	put_futex_key(&key);
 out:
 	if (current->psandbox && is_noisy && current->psandbox->state == BOX_ACTIVE && current->psandbox->activity && current->psandbox->is_futex && current->psandbox->activity->c_resource_numbers < 1) {
-		set_current_state(TASK_INTERRUPTIBLE);
-		v_psandbox->activity->defer_time.tv_nsec = 0;
-		v_psandbox->activity->defer_time.tv_sec = 0;
+	//	set_current_state(TASK_INTERRUPTIBLE);
+	//	v_psandbox->activity->defer_time.tv_nsec = 0;
+	//	v_psandbox->activity->defer_time.tv_sec = 0;
 
 		if (penalty_ns > 1000000) {
-//			pr_info("do sleep for v_psandbox %d, thread %d, defer time %u\n", v_psandbox->bid, current->pid, defer_tm);
-//			defer_tm = 1000000;
+			pr_info("do sleep for v_psandbox %d, thread %d, defer time %u\n", v_psandbox->bid, current->pid, penalty_ns);
+			penalty_ns = 1000000;
        			schedule_hrtimeout(&penalty_ns, HRTIMER_MODE_REL);
 		} else {
 //			pr_info("do sleep for v_psandbox %d, thread %d, defer time %u\n", v_psandbox->bid, current->pid, defer_tm);
- 			penalty_ns = 1000000;
- 			schedule_hrtimeout(&penalty_ns, HRTIMER_MODE_REL);
+ //			penalty_ns = 1000000;
+ 	//		schedule_hrtimeout(&penalty_ns, HRTIMER_MODE_REL);
 		}
 
 	}
@@ -2875,9 +2875,9 @@ out:
 		current_tm = psandbox->activity->defer_time;
 		psandbox->activity->defer_time = timespec64_add(defer_tm, current_tm);
 		psandbox->activity->defer_time = timespec64_add(current_tm, psandbox->activity->defer_time);
-		psandbox->activity->c_resource_numbers++;
 	}
-
+	if(psandbox)
+		psandbox->activity->c_resource_numbers++;
 	return ret;
 }
 
