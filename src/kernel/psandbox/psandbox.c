@@ -65,7 +65,7 @@ SYSCALL_DEFINE3(create_psandbox, int, type, int, isolation_level, int, priority)
 	psandbox->action_level = LOW_PRIORITY;
 	psandbox->is_white = 0;
 	psandbox->delay_ratio = 1;
-	psandbox->is_futex =1;
+	psandbox->is_futex =0;
 	psandbox->tail_requirement = 90;
 	psandbox->bad_activities = 0;
 	psandbox->creator_psandbox = current;
@@ -250,6 +250,7 @@ SYSCALL_DEFINE2(update_event, BoxEvent __user *, event, int, is_lazy) {
 		psandbox->unhold++;
 		psandbox->activity->activity_state = ACTIVITY_EXIT;
 		psandbox->activity->c_resource_numbers--;
+		//pr_info("call UNHOLD for psandbox %d\n",current->psandbox->bid);
 		// calculating the defering time
 		int count = 0;
 		read_lock(&competitors_lock);
@@ -334,7 +335,7 @@ SYSCALL_DEFINE2(update_event, BoxEvent __user *, event, int, is_lazy) {
 
 		}
 
-		if (penalty_ns > 10000 && victim && psandbox->activity->c_resource_numbers < 1) {
+		if (penalty_ns > 10000 && victim) {
 			do_penalty(victim,penalty_ns, key);
 		}
 		break;
@@ -365,8 +366,8 @@ void do_penalty(PSandbox *victim, ktime_t penalty_ns, unsigned int key) {
 		return;
 	}
 
-//	if (stat_node->bad_action && stat_node->bad_action > BASE_RATE)
-//		penalty_ns *= stat_node->bad_action / BASE_RATE;
+	if (stat_node->bad_action && stat_node->bad_action > BASE_RATE)
+		penalty_ns *= stat_node->bad_action / BASE_RATE;
 
 //	victim->state = BOX_AWAKE;
 	wake_up_process(victim->current_task);
@@ -374,11 +375,13 @@ void do_penalty(PSandbox *victim, ktime_t penalty_ns, unsigned int key) {
 
 	if (penalty_ns > 10000000000) {
 		penalty_ns = 10000000000;
-		pr_info("event: sleep psandbox %d, thread %d, defer time %u, score %d\n", current->psandbox->bid, current->pid, penalty_ns,stat_node->bad_action);
+//		pr_info("1.event: sleep psandbox %d, thread %d, defer time %u, score %d\n", current->psandbox->bid, current->pid, penalty_ns,stat_node->bad_action);
+		current->psandbox->total_penalty_time += 10000000000;
 		schedule_hrtimeout(&penalty_ns,HRTIMER_MODE_REL);
 	} else {
 //		penalty_ns=2000000000;
-		pr_info("event: sleep psandbox %d, thread %d, defer time %u, score %d\n", current->psandbox->bid, current->pid, penalty_ns,stat_node->bad_action);
+		pr_info("2.event: sleep psandbox %d, thread %d, defer time %u, score %d\n", current->psandbox->bid, current->pid, penalty_ns,stat_node->bad_action);
+		current->psandbox->total_penalty_time += penalty_ns;
 		schedule_hrtimeout(&penalty_ns,HRTIMER_MODE_REL);
 	}
 
@@ -652,8 +655,8 @@ void clean_psandbox(PSandbox *psandbox) {
 	StatisticNode *stat_cur;
 	struct delaying_start *pos,*temp;
 	if (psandbox->finished_activities > 0) {
-		pr_info( "psandbox syscall called psandbox_release id =%ld by the thread %d, total defer time %llu ns, total execution time %llu ns \n",
-		       psandbox->bid, current->pid,psandbox->total_defer_time, psandbox->total_execution_time);
+		pr_info( "psandbox syscall called psandbox_release id =%ld by the thread %d, total penalty time %llu ns, total defer time %llu ns, total execution time %llu ns \n",
+		       psandbox->bid, current->pid,psandbox->total_penalty_time,psandbox->total_defer_time, psandbox->total_execution_time);
 	} else {
 		pr_info("psandbox syscall called psandbox_release id =%ld by the thread %d\n",
 		       psandbox->bid, current->pid);

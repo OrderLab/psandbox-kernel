@@ -106,6 +106,7 @@ struct psandbox_info {
 	long int bad_activities;
 	long int action_level;
 	ktime_t total_execution_time;
+	ktime_t total_penalty_time;
 	ktime_t total_defer_time;
 	ktime_t average_defer_time;
 	ktime_t average_execution_time;

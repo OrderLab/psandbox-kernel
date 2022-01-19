@@ -1693,13 +1693,13 @@ out:
 	//	v_psandbox->activity->defer_time.tv_sec = 0;
 
 		if (penalty_ns > 1000000) {
-			pr_info("do sleep for v_psandbox %d, thread %d, defer time %u\n", v_psandbox->bid, current->pid, penalty_ns);
+			pr_info("1.do sleep for v_psandbox %d, thread %d, defer time %u\n", v_psandbox->bid, current->pid, penalty_ns);
 			penalty_ns = 1000000;
        			schedule_hrtimeout(&penalty_ns, HRTIMER_MODE_REL);
 		} else {
-//			pr_info("do sleep for v_psandbox %d, thread %d, defer time %u\n", v_psandbox->bid, current->pid, defer_tm);
+			pr_info("2.do sleep for v_psandbox %d, thread %d, defer time %u\n", v_psandbox->bid, current->pid, penalty_ns);
  //			penalty_ns = 1000000;
- 	//		schedule_hrtimeout(&penalty_ns, HRTIMER_MODE_REL);
+ 			schedule_hrtimeout(&penalty_ns, HRTIMER_MODE_REL);
 		}
 
 	}
