@@ -1842,35 +1842,48 @@ SYSCALL_DEFINE3(connect, int, fd, struct sockaddr __user *, uservaddr,
 {
 	// PSandbox changes
 	struct timespec64 tm1, tm2, tm;
-	ktime_t penalty_ns, tm_ns;
+	ktime_t penalty_ns, tm_ns, some_tm;
 	PSandbox *psandbox = current->psandbox;
 	if (psandbox) {
-		switch(psandbox->rule.type) {
-		case ABSOLUTE:
-			penalty_ns = psandbox->rule.isolation_level; //XXX assume ns 
-			break;
-		case RELATIVE:
-			penalty_ns = 
-				psandbox->average_execution_time / 100 * psandbox->rule.isolation_level;
-			break;
-		case SCALABLE:
-			printk(KERN_INFO "Fail to handle isolation rule scalable.");
-			break;
-		}
+		// switch (psandbox->rule.type) {
+		// case ABSOLUTE:
+		// 	penalty_ns = psandbox->rule.isolation_level; //XXX assume ns 
+		// 	break;
+		// case RELATIVE:
+		// 	penalty_ns = 
+		// 		psandbox->average_execution_time/100*psandbox->rule.isolation_level;
+		// 	break;
+		// case SCALABLE:
+		// 	printk(KERN_INFO "Fail to handle isolation rule scalable.");
+		// 	break;
+		// }
 
-		if (penalty_ns > 1000000000) {
-			penalty_ns = 
-					penalty_ns >= 1000000000 * 10 ? 
-						1000000000 * 10 : penalty_ns;
-			__set_current_state(TASK_INTERRUPTIBLE);
-			schedule_hrtimeout(&penalty_ns, HRTIMER_MODE_REL);
+		// if (penalty_ns > 1000000000) {
+		// 	if (penalty_ns > 1000000000 * 10)
+		// 		penalty_ns = ktime_set(10, 0);
 
-			psandbox->activity->adjust_ns = penalty_ns;
-			psandbox->total_defer_time += penalty_ns;
-			psandbox->average_defer_time = penalty_ns/psandbox->finished_activities;
-		}
+		// 	__set_current_state(TASK_INTERRUPTIBLE);
+		// 	schedule_hrtimeout(&penalty_ns, HRTIMER_MODE_REL);
+
+		// 	psandbox->activity->adjust_ns = penalty_ns;
+		// 	psandbox->total_defer_time += penalty_ns;
+		// 	if (psandbox->finished_activities)
+		// 		psandbox->average_defer_time = penalty_ns/psandbox->finished_activities;
+
+		// 	printk(KERN_INFO "psandbox %d: slept for sometime...%llu", psandbox->bid, penalty_ns);
+		// }
+		// //TODO problem
+		// // activity # isn't right, it increases by one everytime there's a unbind
+		// // but a single request in varnish requires unbind for 4 times
+		// // so the actual avg exectution time is down by 4x 
+		// printk(KERN_INFO "psandbox %d: connect, avg exec: %llu, "
+		// 	"total exec: %llu, activity #: %ld, penalty: %llu, adjust: %llu", 
+		// 	psandbox->bid, psandbox->average_execution_time, 
+		// 	psandbox->total_execution_time, psandbox->finished_activities, penalty_ns,
+		// 	psandbox->activity->adjust_ns);
 	}
 
+	// printk(KERN_INFO "task %d: connect syscall fd %d", current->pid, fd);
 	return __sys_connect(fd, uservaddr, addrlen);
 }
 

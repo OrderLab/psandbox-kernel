@@ -70,7 +70,8 @@ SYSCALL_DEFINE3(create_psandbox, int, type, int, isolation_level, int, priority)
 	psandbox->bad_activities = 0;
 	psandbox->creator_psandbox = current;
 	psandbox->is_lazy = 0;
-	psandbox->is_accept = 0;
+	// psandbox->is_accept = 0;
+	psandbox->unbind_flags = UNBIND_NONE;
 	psandbox->requeued = 0;
 	psandbox->task_key = 0;
 	psandbox->count = 0;
@@ -90,8 +91,8 @@ SYSCALL_DEFINE3(create_psandbox, int, type, int, isolation_level, int, priority)
 	
 	live_psandbox++;
 
-	// printk(KERN_INFO "psandbox syscall called psandbox_create id =%ld by thread %d\n",
-	//        psandbox->bid,current->pid);
+	printk(KERN_INFO "psandbox syscall called psandbox_create id =%ld by thread %d\n",
+	       psandbox->bid,current->pid);
 	return current->pid;
 }
 
@@ -123,8 +124,6 @@ SYSCALL_DEFINE0(activate_psandbox)
 	}
 	psandbox->state = BOX_ACTIVE;
 	ktime_get_real_ts64(&psandbox->activity->execution_start);
-//	if(psandbox->bid == 2)
-//		pr_info("call do activate %d\n",psandbox->bid);
 	return 0;
 }
 
@@ -446,7 +445,7 @@ SYSCALL_DEFINE1(get_psandbox, size_t, addr)
 	psandbox = get_unbind_psandbox(addr);
 
 	if (!psandbox) {
-		printk(KERN_INFO "can't find psandbox for addr %d\n", addr);
+		// printk(KERN_INFO "can't find psandbox for addr %llu\n", addr);
 		return -1;
 	}
 
@@ -465,7 +464,8 @@ SYSCALL_DEFINE2(annotate_resource, u32 __user *, uaddr, int, action_type) {
 	return 0;
 }
 
-SYSCALL_DEFINE3(unbind_psandbox, size_t, addr, bool, isLazy, bool, isAccept)
+//SYSCALL_DEFINE3(unbind_psandbox, size_t, addr, bool, isLazy, bool, isAccept)
+SYSCALL_DEFINE2(unbind_psandbox, size_t, addr, int, flags)
 {
 	PSandbox *psandbox = current->psandbox;
 	pid_t pid = psandbox->current_task->pid;
@@ -474,15 +474,16 @@ SYSCALL_DEFINE3(unbind_psandbox, size_t, addr, bool, isLazy, bool, isAccept)
 		printk(KERN_INFO "can't find psandbox to unbind\n");
 		return -1;
 	}
-	psandbox->is_lazy = isLazy;
-	psandbox->is_accept = isAccept;
+	psandbox->is_lazy = flags & UNBIND_LAZY;
+	// psandbox->is_accept = isAccept;
+	psandbox->unbind_flags = flags;
 	current->is_psandbox = 0;
 	psandbox->task_key =  addr;
 	ktime_get_real_ts64(&psandbox->activity->last_unbind_start);
 	do_freeze_psandbox(psandbox);
-//	printk(KERN_INFO "lazy unbind psandbox %d to addr %d\n", psandbox->bid,addr);
-	if (!isLazy) {
-		// printk(KERN_INFO "!!! do unbind for addr %d\n", addr);
+	// printk(KERN_INFO "lazy unbind psandbox %d to addr %d\n", psandbox->bid,addr);
+	if (!psandbox->is_lazy) {
+		// printk(KERN_INFO "task %d: !!! do unbind for addr %llu\n", current->pid, addr);
 		do_unbind(0);
 	}
 
@@ -496,6 +497,7 @@ SYSCALL_DEFINE1(bind_psandbox, size_t, addr)
 	struct hlist_node *tmp;
 	int success;
 	struct timespec64 current_tm, unbind_tm;
+
 
 	success = do_unbind(addr);
 	if( success != 0 )
@@ -517,7 +519,7 @@ SYSCALL_DEFINE1(bind_psandbox, size_t, addr)
 	write_unlock(&transfers_lock);
 
 	if (!psandbox) {
-		printk(KERN_INFO "can't find psandbox to bind %d\n",addr);
+		printk(KERN_INFO "can't find psandbox to bind %llu\n",addr);
 		return -1;
 	}
 
@@ -525,6 +527,7 @@ SYSCALL_DEFINE1(bind_psandbox, size_t, addr)
 	current->is_psandbox = 1;
 	psandbox->current_task = current;
 	psandbox->is_lazy = 0;
+	psandbox->unbind_flags = UNBIND_NONE;
 	psandbox->state = BOX_ACTIVE;
 	ktime_get_real_ts64(&psandbox->activity->execution_start);
 
@@ -541,6 +544,7 @@ SYSCALL_DEFINE1(bind_psandbox, size_t, addr)
 	// printk(KERN_INFO "unbind time nsec %llu \n", timespec64_to_ns(&psandbox->activity->unbind_time));
 	// printk(KERN_INFO "current sec %llu \n", current_tm.tv_sec);
 	// printk(KERN_INFO "last time start sec %llu \n", psandbox->activity->last_unbind_start.tv_sec);
+	// printk(KERN_INFO "task %d: !!! bind psandbox for addr %llu\n", current->pid, addr);
 
 	return psandbox->current_task->pid;
 }
@@ -577,6 +581,7 @@ int do_unbind(size_t addr){
 
 	if(current->psandbox->task_key == addr) {
 		current->psandbox->is_lazy = 0;
+		current->psandbox->unbind_flags = UNBIND_NONE;
 		current->psandbox->state = BOX_ACTIVE;
 		ktime_get_real_ts64(&current->psandbox->activity->execution_start);
 		return current->pid;
@@ -614,19 +619,21 @@ void do_freeze_psandbox(PSandbox *psandbox){
 	unsigned long flags;
 
 	psandbox->state = BOX_FREEZE;
-	psandbox->finished_activities++;
+	if (!(psandbox->unbind_flags & UNBIND_ACT_UNFINISHED))
+		psandbox->finished_activities++;
 	ktime_get_real_ts64(&current_tm);
 	total_time = timespec64_sub(current_tm,psandbox->activity->execution_start);
 	psandbox->activity->execution_time = timespec64_sub(total_time,psandbox->activity->defer_time);
 	psandbox->total_execution_time += timespec64_to_ns(&psandbox->activity->execution_time);
 
-	psandbox->last_unbind_time = timespec64_to_ns(&psandbox->activity->unbind_time);
+	// psandbox->last_unbind_time = timespec64_to_ns(&psandbox->activity->unbind_time);
 	last_unbind_start = psandbox->activity->last_unbind_start;
 
 	//adjust actual execution time
 	if (psandbox->total_execution_time > psandbox->activity->adjust_ns) {
 		psandbox->total_execution_time -= psandbox->activity->adjust_ns;
-		psandbox->average_execution_time = psandbox->total_execution_time/psandbox->finished_activities;
+		if (psandbox->finished_activities)
+			psandbox->average_execution_time = psandbox->total_execution_time/psandbox->finished_activities;
 	} else {
 		psandbox->total_execution_time = 0;
 		psandbox->average_execution_time = 0;
@@ -638,8 +645,10 @@ void do_freeze_psandbox(PSandbox *psandbox){
 	spin_lock_irqsave(&stat_lock, flags);
 //	average_defer_time = average_defer_time * live_psandbox + (average_defer - psandbox->average_defer_time);
 	spin_unlock_irqrestore(&stat_lock, flags);
-	psandbox->average_defer_time = psandbox->total_defer_time/psandbox->finished_activities;
-	psandbox->average_execution_time = psandbox->total_execution_time/psandbox->finished_activities;
+	if (psandbox->finished_activities) {
+		psandbox->average_defer_time = psandbox->total_defer_time/psandbox->finished_activities;
+		psandbox->average_execution_time = psandbox->total_execution_time/psandbox->finished_activities;
+	}
 
 //	if (timespec64_to_ns(&psandbox->activity->execution_time) * psandbox->delay_ratio * live_psandbox < defer_tm) {
 //		psandbox->bad_activities++;
@@ -666,11 +675,11 @@ void clean_psandbox(PSandbox *psandbox) {
 	StatisticNode *stat_cur;
 	struct delaying_start *pos,*temp;
 	if (psandbox->finished_activities > 0) {
-		// pr_info( "psandbox syscall called psandbox_release id =%ld by the thread %d, total defer time %llu ns, total execution time %llu ns \n",
-		//        psandbox->bid, current->pid,psandbox->total_defer_time, psandbox->total_execution_time);
+		pr_info( "psandbox syscall called psandbox_release id =%ld by the thread %d, total defer time %llu ns, total execution time %llu ns \n",
+		       psandbox->bid, current->pid,psandbox->total_defer_time, psandbox->total_execution_time);
 	} else {
-		// pr_info("psandbox syscall called psandbox_release id =%ld by the thread %d\n",
-		//        psandbox->bid, current->pid);
+		pr_info("psandbox syscall called psandbox_release id =%ld by the thread %d\n",
+		       psandbox->bid, current->pid);
 	}
 
 

@@ -494,16 +494,25 @@ struct sock *inet_csk_accept(struct sock *sk, int flags, int *err, bool kern)
 
 	// PSandbox change
 	struct timespec64 current_tm, queue_tm, tm;
-	ktime_t current_tm_ns, expected_out_tm_ns, add_tm_us;
+	ktime_t current_tm_ns, expected_out_tm_ns, add_tm_ns;
 	PSandbox *psandbox;
 	size_t addr;
 
 	int count = 0;
+	ktime_t loop_interval = ktime_set(0, 1000000 * 2);
 
 	// printk(KERN_INFO "!!!!! Inet accpet queue START");
 
 	//XXX CPU Stall fix later
-	int batch = 1024; // COND_RESHED_CHECK_BATCH
+	#define BATCH_SIZE 1024
+	int batch = BATCH_SIZE;
+
+
+	//TODO 1. print it out, see if in intr disabled ...
+	// printk(KERN_INFO "------------- irqs_disabled = %d, in_interrupt = %d",
+	// irqs_disabled(), in_interrupt());
+
+	//TODO 2. try sleep 1 sec in each for loop
 	for (;;) {
 		//pop from from accept queue
 		req = reqsk_queue_remove(queue, sk);
@@ -515,14 +524,10 @@ struct sock *inet_csk_accept(struct sock *sk, int flags, int *err, bool kern)
 		psandbox = get_unbind_psandbox(addr);
 		// cond_resched();
 
-		// if (addr == 2658904256) {
-		// 	ktime_get_real_ts64(&current_tm);
-		// 	printk(KERN_INFO "+++++ OUT QUEUE %llu, %llu", addr, current_tm.tv_sec);
-		// }
-
 		if (!psandbox) 
 			break;
-		if (!psandbox->is_accept)
+		// if (!psandbox->is_accept)
+		if (!(psandbox->unbind_flags & UNBIND_HANDLE_ACCEPT))
 			break;
 		
 		// count++;
@@ -533,7 +538,6 @@ struct sock *inet_csk_accept(struct sock *sk, int flags, int *err, bool kern)
 		ktime_get_real_ts64(&current_tm);
 		current_tm_ns = timespec64_to_ns(&current_tm);
 		expected_out_tm_ns = timespec64_to_ns(&psandbox->activity->expected_queue_out);
-		// cond_resched();
 		if (expected_out_tm_ns <= current_tm_ns && psandbox->requeued) {
 			ktime_get_real_ts64(&current_tm);
 			tm = timespec64_sub(current_tm, psandbox->activity->last_queue_in);
@@ -541,41 +545,37 @@ struct sock *inet_csk_accept(struct sock *sk, int flags, int *err, bool kern)
 
 			tm = timespec64_sub(current_tm, psandbox->activity->requeue_start);
 			psandbox->total_defer_time += timespec64_to_ns(&tm);
-			psandbox->average_defer_time = psandbox->total_defer_time/psandbox->finished_activities;
+			if (psandbox->finished_activities)
+				psandbox->average_defer_time = 
+					psandbox->total_defer_time/psandbox->finished_activities;
 			psandbox->requeued = 0;
-			// cond_resched();
 			break;
 		}
 
 		if (!psandbox->requeued) {
 			switch(psandbox->rule.type) {
 			case ABSOLUTE:
-				add_tm_us = psandbox->rule.isolation_level; //XXXassume ns 
+				add_tm_ns = psandbox->rule.isolation_level; //XXXassume ns 
 				break;
 			case RELATIVE:
-				add_tm_us = 
+				add_tm_ns = 
 					psandbox->average_execution_time / 100 * psandbox->rule.isolation_level;
 				break;
 			case SCALABLE:
 				printk(KERN_INFO "Fail to handle isolation rule scalable.");
 				break;
 			}
-			// printk(KERN_INFO "+++++ NOT YET REQUEUE %llu, %llu", psandbox->task_key, psandbox->average_execution_time);
 
-			// cond_resched();
-
-			if (add_tm_us <= 1000000000) 
+			if (psandbox->average_execution_time <= 1000000000)
 				break;
-			if (add_tm_us >= 1000000000 * 10)
-				add_tm_us = 1000000000 * 10;
-			else
-				add_tm_us = add_tm_us;
 
-			// cond_resched();
-			tm = ns_to_timespec64(add_tm_us);
+			add_tm_ns = add_tm_ns / 10;
+			if (add_tm_ns >= 1000000 * 100)
+				add_tm_ns = ktime_set(0, 1000000 * 100);
+
+			tm = ns_to_timespec64(add_tm_ns);
 			psandbox->activity->expected_queue_out = timespec64_add(current_tm, tm);
 			ktime_get_real_ts64(&psandbox->activity->requeue_start);
-			// cond_resched();
 		}
 
 
@@ -589,12 +589,19 @@ struct sock *inet_csk_accept(struct sock *sk, int flags, int *err, bool kern)
 		__reqsk_queue_add(queue, sk, req, newsk);
 
 		if (!--batch) {
-			cond_resched();
-			batch = 1024;
+			// cond_resched();
+			// cond_resched_tasks_rcu_qs();
+			// cond_resched_rcu();
+			batch = BATCH_SIZE;
+
+	// 		printk(KERN_INFO "------------- %d irqs_disabled = %d, in_interrupt = %d",
+	// current->pid, irqs_disabled(), in_interrupt());
+			__set_current_state(TASK_INTERRUPTIBLE);
+			schedule_hrtimeout(&loop_interval, HRTIMER_MODE_REL);
 		}
 
 	}
-
+	#undef COND_RESHED_CHECK_BATCH
 	// printk(KERN_INFO "!!!!! Inet accpet queue END %llu", addr);
 
 	if (sk->sk_protocol == IPPROTO_TCP &&

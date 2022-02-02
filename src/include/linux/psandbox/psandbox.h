@@ -53,6 +53,13 @@ enum enum_activity_state {
 	ACTIVITY_WAITING,ACTIVITY_ENTER,ACTIVITY_EXIT,ACTIVITY_PREEMPTED,ACTIVITY_PROMOTED
 };
 
+enum enum_unbind_flag {
+	UNBIND_LAZY 		  = 0x1,
+	UNBIND_ACT_UNFINISHED = 0x2,
+	UNBIND_HANDLE_ACCEPT  = 0x4,
+	// UNBIND_HANDLE_CONNECT = 0x8,
+	UNBIND_NONE 		  = 0x0, //TODO change to UNBIND_DEFAULT
+};
 
 
 struct delaying_start {
@@ -68,7 +75,7 @@ typedef struct activity {
 	struct timespec64 execution_time;
 	struct timespec64 last_unbind_start;
 	struct timespec64 unbind_time;
-	struct timespec64 last_queue_in; //XXX unused
+	struct timespec64 last_queue_in; 
 	struct timespec64 expected_queue_out;
 	struct timespec64 requeue_start;
 	int try_number;
@@ -112,7 +119,7 @@ struct psandbox_info {
 	ktime_t total_defer_time;
 	ktime_t average_defer_time;
 	ktime_t average_execution_time;
-	ktime_t last_unbind_time; //XXX remove
+	// ktime_t last_unbind_time; //XXX remove
 	ktime_t last_queue_time;
 	IsolationRule rule; // the rule for isolation
 	int priority;
@@ -127,7 +134,8 @@ struct psandbox_info {
 	PSandboxNode competitors[COMPETITORS_SIZE];
 	struct list_head delay_list;
 	int is_lazy;
-	int is_accept;
+	// int is_accept;
+	enum enum_unbind_flag unbind_flags;
 	int requeued;
 	u64 addr;
 
