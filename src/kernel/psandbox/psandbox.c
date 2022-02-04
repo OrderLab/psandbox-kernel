@@ -70,6 +70,9 @@ SYSCALL_DEFINE3(create_psandbox, int, type, int, isolation_level, int, priority)
 	psandbox->bad_activities = 0;
 	psandbox->creator_psandbox = current;
 	psandbox->is_lazy = 0;
+	// psandbox->is_accept = 0;
+	psandbox->unbind_flags = UNBIND_NONE;
+	psandbox->requeued = 0;
 	psandbox->task_key = 0;
 	psandbox->count = 0;
 	psandbox->rule.type = type;
@@ -122,8 +125,6 @@ SYSCALL_DEFINE0(activate_psandbox)
 	}
 	psandbox->state = BOX_ACTIVE;
 	ktime_get_real_ts64(&psandbox->activity->execution_start);
-//	if(psandbox->bid == 2)
-//		pr_info("call do activate %d\n",psandbox->bid);
 	return 0;
 }
 
@@ -353,6 +354,7 @@ void do_penalty(PSandbox *victim, ktime_t penalty_ns, unsigned int key) {
 	ktime_t old_slack = victim->total_defer_time;
 	ktime_t new_slack = victim->total_execution_time;
 	read_lock(&stat_map_lock);
+
 	hash_for_each_possible_safe (stat_map, stat_cur, tmp, node, key) {
 		if (stat_cur->psandbox == victim) {
 			stat_node = stat_cur;
@@ -368,6 +370,7 @@ void do_penalty(PSandbox *victim, ktime_t penalty_ns, unsigned int key) {
 
 	if (stat_node->bad_action && stat_node->bad_action > BASE_RATE)
 		penalty_ns *= stat_node->bad_action / BASE_RATE;
+	
 
 //	victim->state = BOX_AWAKE;
 	wake_up_process(victim->current_task);
@@ -432,25 +435,31 @@ SYSCALL_DEFINE0(get_current_psandbox)
 	return current->psandbox->bid;
 }
 
-SYSCALL_DEFINE1(get_psandbox, int, addr)
+SYSCALL_DEFINE1(get_psandbox, size_t, addr)
 {
 	PSandbox *psandbox = NULL;
-	PSandboxNode *cur;
-	struct hlist_node *tmp;
-	read_lock(&transfers_lock);
-	hash_for_each_possible_safe (transfers_map, cur, tmp, node, addr) {
-		if (cur->psandbox->task_key == addr) {
-			psandbox = cur->psandbox;
-			break;
-		}
-	}
-	read_unlock(&transfers_lock);
+	// PSandboxNode *cur;
+	// struct hlist_node *tmp;
+	// read_lock(&transfers_lock);
+	// hash_for_each_possible_safe (transfers_map, cur, tmp, node, addr) {
+	// 	if (cur->psandbox->task_key == addr) {
+	// 		psandbox = cur->psandbox;
+	// 		break;
+	// 	}
+	// }
+	// read_unlock(&transfers_lock);
+
+	psandbox = get_unbind_psandbox(addr);
+
 	if (!psandbox) {
-		printk(KERN_INFO "can't find psandbox for addr %d\n", addr);
+		// printk(KERN_INFO "can't find psandbox for addr %llu\n", addr);
 		return -1;
 	}
 
-	return psandbox->current_task->pid;
+	//XXX psandbox->current_task is a NULL ptr for sure, 
+	// so let's just use bid instead, 
+	// ... or return 0 which both can be confusing considering the naming
+	return psandbox->bid;
 }
 
 SYSCALL_DEFINE2(annotate_resource, u32 __user *, uaddr, int, action_type) {
@@ -462,30 +471,40 @@ SYSCALL_DEFINE2(annotate_resource, u32 __user *, uaddr, int, action_type) {
 	return 0;
 }
 
-SYSCALL_DEFINE1(unbind_psandbox, u64, addr)
+//SYSCALL_DEFINE3(unbind_psandbox, size_t, addr, bool, isLazy, bool, isAccept)
+SYSCALL_DEFINE2(unbind_psandbox, size_t, addr, int, flags)
 {
 	PSandbox *psandbox = current->psandbox;
+	pid_t pid = psandbox->current_task->pid;
 
 	if (!psandbox) {
 		printk(KERN_INFO "can't find psandbox to unbind\n");
 		return -1;
 	}
-	psandbox->is_lazy = 1;
+	psandbox->is_lazy = flags & UNBIND_LAZY;
+	// psandbox->is_accept = isAccept;
+	psandbox->unbind_flags = flags;
 	current->is_psandbox = 0;
 	psandbox->task_key =  addr;
 	ktime_get_real_ts64(&psandbox->activity->last_unbind_start);
 	do_freeze_psandbox(psandbox);
-//	printk(KERN_INFO "lazy unbind psandbox %d to addr %d\n", psandbox->bid,addr);
-	return psandbox->current_task->pid;
+	// printk(KERN_INFO "lazy unbind psandbox %d to addr %d\n", psandbox->bid,addr);
+	if (!psandbox->is_lazy) {
+		// printk(KERN_INFO "task %d: !!! do unbind for addr %llu\n", current->pid, addr);
+		do_unbind(0);
+	}
+
+	return pid;
 }
 
-SYSCALL_DEFINE1(bind_psandbox, int, addr)
+SYSCALL_DEFINE1(bind_psandbox, size_t, addr)
 {
 	PSandbox *psandbox = NULL;
 	PSandboxNode *cur;
 	struct hlist_node *tmp;
 	int success;
-//	struct timespec64 current_tm, unbind_tm;
+	struct timespec64 current_tm, unbind_tm;
+
 
 	success = do_unbind(addr);
 	if( success != 0 )
@@ -507,7 +526,7 @@ SYSCALL_DEFINE1(bind_psandbox, int, addr)
 	write_unlock(&transfers_lock);
 
 	if (!psandbox) {
-		printk(KERN_INFO "can't find psandbox to bind %d\n",addr);
+		printk(KERN_INFO "can't find psandbox to bind %llu\n",addr);
 		return -1;
 	}
 
@@ -515,14 +534,24 @@ SYSCALL_DEFINE1(bind_psandbox, int, addr)
 	current->is_psandbox = 1;
 	psandbox->current_task = current;
 	psandbox->is_lazy = 0;
+	psandbox->unbind_flags = UNBIND_NONE;
 	psandbox->state = BOX_ACTIVE;
 	ktime_get_real_ts64(&psandbox->activity->execution_start);
-//	ktime_get_real_ts64(&current_tm);
-//	unbind_tm =
-//		timespec64_sub(current_tm, psandbox->activity->last_unbind_start);
-//	current_tm = psandbox->activity->unbind_time;
-//	psandbox->activity->unbind_time = timespec64_add(unbind_tm, current_tm);
-//	printk(KERN_INFO "bind the psandbox %d (find by addr %d) to thread %d\n",psandbox->bid,addr,current->pid);
+
+	ktime_get_real_ts64(&current_tm);
+	unbind_tm =
+		timespec64_sub(current_tm, psandbox->activity->last_unbind_start);
+	// current_tm = psandbox->activity->unbind_time;
+	// psandbox->activity->unbind_time = timespec64_add(unbind_tm, current_tm);
+	psandbox->activity->unbind_time = unbind_tm;
+	// printk(KERN_INFO "bind the psandbox %d (find by addr %d) to thread %d\n",psandbox->bid,addr,current->pid);
+
+	// ktime_get_real_ts64(&current_tm);
+	// ktime_t tm = timespec64_to_ns(&psandbox->activity->unbind_time);
+	// printk(KERN_INFO "unbind time nsec %llu \n", timespec64_to_ns(&psandbox->activity->unbind_time));
+	// printk(KERN_INFO "current sec %llu \n", current_tm.tv_sec);
+	// printk(KERN_INFO "last time start sec %llu \n", psandbox->activity->last_unbind_start.tv_sec);
+	// printk(KERN_INFO "task %d: !!! bind psandbox for addr %llu\n", current->pid, addr);
 
 	return psandbox->current_task->pid;
 }
@@ -547,7 +576,7 @@ SYSCALL_DEFINE2(penalize_psandbox, long int, penalty_us,unsigned int, key)
 	return 0;
 }
 
-int do_unbind(int addr){
+int do_unbind(size_t addr){
 	PSandboxNode *a = NULL;
 	int i;
 	PSandbox *psandbox = current->psandbox;
@@ -559,6 +588,7 @@ int do_unbind(int addr){
 
 	if(current->psandbox->task_key == addr) {
 		current->psandbox->is_lazy = 0;
+		current->psandbox->unbind_flags = UNBIND_NONE;
 		current->psandbox->state = BOX_ACTIVE;
 		ktime_get_real_ts64(&current->psandbox->activity->execution_start);
 		return current->pid;
@@ -580,6 +610,7 @@ int do_unbind(int addr){
 	current->is_psandbox = 0;
 	a->psandbox = psandbox;
 	write_lock(&transfers_lock);
+	// printk(KERN_INFO "!!!------- INSIDE do unbind for addr %d\n", addr);
 	hash_add(transfers_map,&a->node,psandbox->task_key);
 	write_unlock(&transfers_lock);
 
@@ -588,18 +619,32 @@ int do_unbind(int addr){
 }
 
 void do_freeze_psandbox(PSandbox *psandbox){
-	struct timespec64 current_tm, total_time;
+	struct timespec64 current_tm, total_time, last_unbind_start, expected_queue_out;
 //	ktime_t average_defer;
 //	struct list_head temp;
 	ktime_t defer_tm;
 	unsigned long flags;
 
 	psandbox->state = BOX_FREEZE;
-	psandbox->finished_activities++;
+	if (!(psandbox->unbind_flags & UNBIND_ACT_UNFINISHED))
+		psandbox->finished_activities++;
 	ktime_get_real_ts64(&current_tm);
 	total_time = timespec64_sub(current_tm,psandbox->activity->execution_start);
 	psandbox->activity->execution_time = timespec64_sub(total_time,psandbox->activity->defer_time);
 	psandbox->total_execution_time += timespec64_to_ns(&psandbox->activity->execution_time);
+
+	// psandbox->last_unbind_time = timespec64_to_ns(&psandbox->activity->unbind_time);
+	last_unbind_start = psandbox->activity->last_unbind_start;
+
+	//adjust actual execution time
+	if (psandbox->total_execution_time > psandbox->activity->adjust_ns) {
+		psandbox->total_execution_time -= psandbox->activity->adjust_ns;
+		if (psandbox->finished_activities)
+			psandbox->average_execution_time = psandbox->total_execution_time/psandbox->finished_activities;
+	} else {
+		psandbox->total_execution_time = 0;
+		psandbox->average_execution_time = 0;
+	}
 
 	defer_tm = timespec64_to_ns(&psandbox->activity->defer_time);
 	psandbox->total_defer_time += defer_tm;
@@ -607,8 +652,10 @@ void do_freeze_psandbox(PSandbox *psandbox){
 	spin_lock_irqsave(&stat_lock, flags);
 //	average_defer_time = average_defer_time * live_psandbox + (average_defer - psandbox->average_defer_time);
 	spin_unlock_irqrestore(&stat_lock, flags);
-	psandbox->average_defer_time = psandbox->total_defer_time/psandbox->finished_activities;
-	psandbox->average_execution_time = psandbox->total_execution_time/psandbox->finished_activities;
+	if (psandbox->finished_activities) {
+		psandbox->average_defer_time = psandbox->total_defer_time/psandbox->finished_activities;
+		psandbox->average_execution_time = psandbox->total_execution_time/psandbox->finished_activities;
+	}
 
 //	if (timespec64_to_ns(&psandbox->activity->execution_time) * psandbox->delay_ratio * live_psandbox < defer_tm) {
 //		psandbox->bad_activities++;
@@ -646,6 +693,7 @@ void do_freeze_psandbox(PSandbox *psandbox){
 //	}
 
 	memset(psandbox->activity, 0, sizeof(Activity));
+	psandbox->activity->last_unbind_start = last_unbind_start;
 }
 
 void clean_psandbox(PSandbox *psandbox) {
@@ -752,6 +800,31 @@ PSandbox *get_psandbox(int bid) {
 
 	read_unlock(&psandbox_lock);
 	return pos;
+}
+
+//XXX use long signed int for addr
+// change to get_unbind_psandbox
+PSandbox *get_unbind_psandbox(size_t addr) {
+	PSandbox *psandbox = NULL;
+	PSandboxNode *cur;
+	struct hlist_node *tmp;
+	read_lock(&transfers_lock);
+	// printk(KERN_INFO "!!!! Start get_pandbox_unbind  %ld\n", addr);
+	hash_for_each_possible_safe (transfers_map, cur, tmp, node, addr) {
+	// int bkt;
+	// hash_for_each_safe (transfers_map, bkt, tmp, cur, node) {
+		//XXX printf size see what's up
+		// printk(KERN_INFO "!!!! Iterating get_pandbox_unbind  %ld, %ld\n", addr, cur->psandbox->task_key);
+		if (cur->psandbox->task_key == addr) {
+			psandbox = cur->psandbox;
+			// printk(KERN_INFO "!!!! Iterating get_pandbox_unbind 222  %ld, %ld, p=%x\n", addr, cur->psandbox->task_key, psandbox);
+			break;
+		}
+	}
+	// printk(KERN_INFO "!!!! End get_pandbox_unbind  %ld p=%x\n", addr, psandbox);
+	read_unlock(&transfers_lock);
+	// printk(KERN_INFO "!!!! End get_pandbox_unbind <3 %ld p=%x\n", addr, psandbox);
+	return psandbox;
 }
 
 static int psandbox_init(void)
