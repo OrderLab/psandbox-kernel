@@ -498,21 +498,20 @@ struct sock *inet_csk_accept(struct sock *sk, int flags, int *err, bool kern)
 	PSandbox *psandbox;
 	size_t addr;
 
-	int count = 0;
+	// int count = 0;
 	ktime_t loop_interval = ktime_set(0, 1000000 * 2);
 
-	// printk(KERN_INFO "!!!!! Inet accpet queue START");
-
-	//XXX CPU Stall fix later
 	#define BATCH_SIZE 1024
 	int batch = BATCH_SIZE;
 
-
-	//TODO 1. print it out, see if in intr disabled ...
-	// printk(KERN_INFO "------------- irqs_disabled = %d, in_interrupt = %d",
-	// irqs_disabled(), in_interrupt());
-
-	//TODO 2. try sleep 1 sec in each for loop
+	//TODO optimize
+	// can use cond var and store all requeued psandbox
+	// in a sorted list, and check when to expire in the
+	// timer interrupt call
+	// problems: 1. pointer to psandbox can possibly be freed
+	// when it's in the list; 2. notification order in the
+	// interrupt call might not be the same as the removing 
+	// order from the accept queue
 	for (;;) {
 		//pop from from accept queue
 		req = reqsk_queue_remove(queue, sk);
@@ -522,11 +521,9 @@ struct sock *inet_csk_accept(struct sock *sk, int flags, int *err, bool kern)
 		psandbox = NULL;
 
 		psandbox = get_unbind_psandbox(addr);
-		// cond_resched();
 
 		if (!psandbox) 
 			break;
-		// if (!psandbox->is_accept)
 		if (!(psandbox->unbind_flags & UNBIND_HANDLE_ACCEPT))
 			break;
 		
@@ -578,31 +575,24 @@ struct sock *inet_csk_accept(struct sock *sk, int flags, int *err, bool kern)
 			ktime_get_real_ts64(&psandbox->activity->requeue_start);
 		}
 
-
 		// printk(KERN_INFO ">>>>> REQUEUE Accept it %d psandbox %llu, avg exec time %llu, current tm %llu, expected out %llu \n", 
 		// 		count, psandbox->task_key, psandbox->average_execution_time, 
 		// 		current_tm_ns,
 		// 		timespec64_to_ns(&psandbox->activity->expected_queue_out));
 
-		//mark & add back to queue
+		// mark & add it back to queue
 		psandbox->requeued += 1;
 		__reqsk_queue_add(queue, sk, req, newsk);
 
 		if (!--batch) {
 			// cond_resched();
-			// cond_resched_tasks_rcu_qs();
-			// cond_resched_rcu();
 			batch = BATCH_SIZE;
-
-	// 		printk(KERN_INFO "------------- %d irqs_disabled = %d, in_interrupt = %d",
-	// current->pid, irqs_disabled(), in_interrupt());
 			__set_current_state(TASK_INTERRUPTIBLE);
 			schedule_hrtimeout(&loop_interval, HRTIMER_MODE_REL);
 		}
 
 	}
 	#undef COND_RESHED_CHECK_BATCH
-	// printk(KERN_INFO "!!!!! Inet accpet queue END %llu", addr);
 
 	if (sk->sk_protocol == IPPROTO_TCP &&
 	    tcp_rsk(req)->tfo_listener) {
