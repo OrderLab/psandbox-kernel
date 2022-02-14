@@ -338,7 +338,7 @@ SYSCALL_DEFINE2(update_event, BoxEvent __user *, event, int, is_lazy) {
 		}
 
 		if (penalty_ns > 10000 && victim) {
-			penalty_ns = calculate_starting_penalty_ns(victim,penalty_ns,psandbox);
+			penalty_ns = calculate_starting_penalty_ns(victim,penalty_ns,psandbox,1);
 			do_penalty(victim,penalty_ns, key);
 		} else if (penalty_ns != 0){
 			pr_info("3. skip event: sleep psandbox %d, thread %d, defer time %llu\n", current->psandbox->bid, current->pid, penalty_ns);
@@ -351,8 +351,14 @@ SYSCALL_DEFINE2(update_event, BoxEvent __user *, event, int, is_lazy) {
 	return 0;
 }
 
-ktime_t calculate_starting_penalty_ns(PSandbox *victim,ktime_t penalty_ns,PSandbox *noisy){
-	return (int_sqrt64(penalty_ns*noisy->average_execution_time) - victim->average_execution_time);
+ktime_t calculate_starting_penalty_ns(PSandbox *victim,ktime_t penalty_ns,PSandbox *noisy,int type){
+	switch(type) {
+	case NORMAL:
+		return penalty_ns;
+	case AVERAGE:
+		return (int_sqrt64(penalty_ns*noisy->average_execution_time) - victim->average_execution_time);
+	}
+	return 0;
 }
 
 void do_penalty(PSandbox *victim, ktime_t penalty_ns, unsigned int key) {
@@ -361,8 +367,8 @@ void do_penalty(PSandbox *victim, ktime_t penalty_ns, unsigned int key) {
 	struct hlist_node *tmp;
 	ktime_t old_slack = victim->total_defer_time;
 	ktime_t new_slack = victim->total_execution_time;
-	read_lock(&stat_map_lock);
 
+	read_lock(&stat_map_lock);
 	hash_for_each_possible_safe (stat_map, stat_cur, tmp, node, key) {
 		if (stat_cur->psandbox == victim) {
 			stat_node = stat_cur;
@@ -378,7 +384,7 @@ void do_penalty(PSandbox *victim, ktime_t penalty_ns, unsigned int key) {
 
 	if (stat_node->bad_action && stat_node->bad_action > BASE_RATE)
 		penalty_ns *= stat_node->bad_action / BASE_RATE;
-	
+
 
 //	victim->state = BOX_AWAKE;
 	wake_up_process(victim->current_task);

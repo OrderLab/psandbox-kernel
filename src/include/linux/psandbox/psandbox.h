@@ -35,6 +35,7 @@ enum enum_event_type {
 
 enum enum_isolation_type { ABSOLUTE, RELATIVE, SCALABLE, ISOLATION_DEFAULT};
 
+enum enum_penalty_type {NORMAL, AVERAGE};
 typedef struct sandboxEvent {
 	enum enum_event_type event_type;
 	u32 key;
@@ -150,7 +151,7 @@ struct psandbox_info {
 
 extern long int live_psandbox;
 
-ktime_t calculate_starting_penalty_ns(PSandbox *victim,ktime_t penalty_ns,PSandbox *noisy);
+ktime_t calculate_starting_penalty_ns(PSandbox *victim,ktime_t penalty_ns,PSandbox *noisy,int type);
 void do_penalty(PSandbox *victim, ktime_t penalty_ns, unsigned int key) ;
 void do_freeze_psandbox(PSandbox *psandbox);
 void clean_psandbox(PSandbox *psandbox);
