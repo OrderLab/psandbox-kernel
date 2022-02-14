@@ -22,6 +22,9 @@
 #include <net/tcp.h>
 #include <net/sock_reuseport.h>
 #include <net/addrconf.h>
+/* Psandbox change */
+#include <linux/time.h>
+#include <linux/psandbox/psandbox.h>
 
 #if IS_ENABLED(CONFIG_IPV6)
 /* match_wildcard == true:  IPV6_ADDR_ANY equals to any IPv6 addresses if IPv6
@@ -432,6 +435,28 @@ static int inet_csk_wait_for_connect(struct sock *sk, long timeo)
 }
 
 /*
+ * This is a helper function to re-add request back to the queue
+ */
+static inline void __reqsk_queue_add(struct request_sock_queue *queue,
+						struct sock *parent, struct request_sock *req,
+						struct sock *child)
+{
+	spin_lock(&queue->rskq_lock);
+
+	req->sk = child;
+	req->dl_next = NULL;
+	if (queue->rskq_accept_head == NULL)
+		WRITE_ONCE(queue->rskq_accept_head, req);
+	else
+		queue->rskq_accept_tail->dl_next = req;
+	queue->rskq_accept_tail = req;
+	sk_acceptq_added(parent);
+	
+	spin_unlock(&queue->rskq_lock);
+	return;
+}
+
+/*
  * This will accept the next outstanding connection.
  */
 struct sock *inet_csk_accept(struct sock *sk, int flags, int *err, bool kern)
@@ -464,8 +489,110 @@ struct sock *inet_csk_accept(struct sock *sk, int flags, int *err, bool kern)
 		if (error)
 			goto out_err;
 	}
-	req = reqsk_queue_remove(queue, sk);
-	newsk = req->sk;
+	// req = reqsk_queue_remove(queue, sk);
+	// newsk = req->sk;
+
+	// PSandbox change
+	struct timespec64 current_tm, queue_tm, tm;
+	ktime_t current_tm_ns, expected_out_tm_ns, add_tm_ns;
+	PSandbox *psandbox;
+	size_t addr;
+
+	// int count = 0;
+	ktime_t loop_interval = ktime_set(0, 1000000 * 2);
+
+	#define BATCH_SIZE 1024
+	int batch = BATCH_SIZE;
+
+	//TODO optimize
+	// can use cond var and store all requeued psandbox
+	// in a sorted list, and check when to expire in the
+	// timer interrupt call
+	// problems: 1. pointer to psandbox can possibly be freed
+	// when it's in the list; 2. notification order in the
+	// interrupt call might not be the same as the removing 
+	// order from the accept queue
+	for (;;) {
+		//pop from from accept queue
+		req = reqsk_queue_remove(queue, sk);
+		newsk = req->sk;
+
+		addr = newsk->sk_daddr;
+		psandbox = NULL;
+
+		psandbox = get_unbind_psandbox(addr);
+
+		if (!psandbox) 
+			break;
+		if (!(psandbox->unbind_flags & UNBIND_HANDLE_ACCEPT))
+			break;
+		
+		// count++;
+		// printk(KERN_INFO "------------- Accept it %d psandbox %llu, avg exec time %llu, requeued %d, expected out %llu \n", 
+		// 		count, psandbox->task_key, psandbox->average_execution_time, psandbox->requeued, 
+		// 		timespec64_to_ns(&psandbox->activity->expected_queue_out));
+
+		ktime_get_real_ts64(&current_tm);
+		current_tm_ns = timespec64_to_ns(&current_tm);
+		expected_out_tm_ns = timespec64_to_ns(&psandbox->activity->expected_queue_out);
+		if (expected_out_tm_ns <= current_tm_ns && psandbox->requeued) {
+			ktime_get_real_ts64(&current_tm);
+			tm = timespec64_sub(current_tm, psandbox->activity->last_queue_in);
+			psandbox->last_queue_time = timespec64_to_ns(&tm);
+
+			tm = timespec64_sub(current_tm, psandbox->activity->requeue_start);
+			psandbox->total_defer_time += timespec64_to_ns(&tm);
+			if (psandbox->finished_activities)
+				psandbox->average_defer_time = 
+					psandbox->total_defer_time/psandbox->finished_activities;
+			psandbox->requeued = 0;
+			break;
+		}
+
+		if (!psandbox->requeued) {
+			switch(psandbox->rule.type) {
+			case ABSOLUTE:
+				add_tm_ns = psandbox->rule.isolation_level; //XXXassume ns 
+				break;
+			case RELATIVE:
+				add_tm_ns = 
+					psandbox->average_execution_time / 100 * psandbox->rule.isolation_level;
+				break;
+			case SCALABLE:
+				printk(KERN_INFO "Fail to handle isolation rule scalable.");
+				break;
+			}
+
+			if (psandbox->average_execution_time <= 1000000000)
+				break;
+
+			add_tm_ns = add_tm_ns / 10;
+			if (add_tm_ns >= 1000000 * 100)
+				add_tm_ns = ktime_set(0, 1000000 * 100);
+
+			tm = ns_to_timespec64(add_tm_ns);
+			psandbox->activity->expected_queue_out = timespec64_add(current_tm, tm);
+			ktime_get_real_ts64(&psandbox->activity->requeue_start);
+		}
+
+		// printk(KERN_INFO ">>>>> REQUEUE Accept it %d psandbox %llu, avg exec time %llu, current tm %llu, expected out %llu \n", 
+		// 		count, psandbox->task_key, psandbox->average_execution_time, 
+		// 		current_tm_ns,
+		// 		timespec64_to_ns(&psandbox->activity->expected_queue_out));
+
+		// mark & add it back to queue
+		psandbox->requeued += 1;
+		__reqsk_queue_add(queue, sk, req, newsk);
+
+		if (!--batch) {
+			// cond_resched();
+			batch = BATCH_SIZE;
+			__set_current_state(TASK_INTERRUPTIBLE);
+			schedule_hrtimeout(&loop_interval, HRTIMER_MODE_REL);
+		}
+
+	}
+	#undef COND_RESHED_CHECK_BATCH
 
 	if (sk->sk_protocol == IPPROTO_TCP &&
 	    tcp_rsk(req)->tfo_listener) {
@@ -926,11 +1053,54 @@ struct sock *inet_csk_reqsk_queue_add(struct sock *sk,
 {
 	struct request_sock_queue *queue = &inet_csk(sk)->icsk_accept_queue;
 
+
+
 	spin_lock(&queue->rskq_lock);
 	if (unlikely(sk->sk_state != TCP_LISTEN)) {
 		inet_child_forget(sk, req, child);
 		child = NULL;
 	} else {
+
+		// // PSandbox change
+		// //XXX get psandbox, check for unbind time (last time) 
+		// // if bad, we sleep for a while before add to the queue
+		// // printk(KERN_INFO "!!!! YO LETS FINALLY ADD REQSK TO THE QUEUE \n");
+		// // signed int addr = child->sk_daddr;
+		// size_t addr = child->sk_daddr;
+		// // printk(KERN_INFO "!!!! YO sk_daddr %d\n", child->sk_daddr);
+
+		// size_t addr = child->sk_daddr;
+		// if (addr == 2658904256) {
+		// 	struct timespec64 current_tm;
+		// 	ktime_get_real_ts64(&current_tm);
+		// 	printk(KERN_INFO "+++++ IN QUEUE %llu, %llu", addr, current_tm.tv_sec);
+		// }
+
+
+		// PSandbox *psandbox = NULL;
+		// // printk(KERN_INFO "!!!! YO sk_daddr %d, psandbox=%x\n", child->sk_daddr, get_psandbox_unbind(addr));
+		// psandbox = get_unbind_psandbox(addr);
+		// if (psandbox) {
+		// 	// printk(KERN_INFO "!!!! YO get psandbox unbind %lld \n", psandbox->task_key);
+
+		// 	ktime_get_real_ts64(&psandbox->activity->last_queue_in);
+
+
+		// 	// ktime_t unbind_tm = timespec64_to_ns(&psandbox->activity->unbind_time);
+		// 	//XXX activity gets cleared in do_freaze, add a field in psanbox
+		// 	// only last bind-unbind time or total?
+		// 	// printk(KERN_INFO ">>>>> nsec %llu \n", psandbox->last_queue_time);
+		// 	//XXX 1. do track first, see if I can find the unbind_time...
+		// 	//XXX change ... do penalty, remote
+		// 	// do_penalty(psandbox, psandbox->activity->unbind_time.tv_nsec, addr);
+
+		// } else {
+		// 	// printk(KERN_INFO "!!!! YO DIDN'T get psandbox unbind :( addr= %d  psandbox=%x\n", addr, psandbox);
+		// }
+
+		// // printk(KERN_INFO "!!!! YO rcv_saddr %x\n", inet_csk(sk)->icsk_inet.inet_saddr);
+
+
 		req->sk = child;
 		req->dl_next = NULL;
 		if (queue->rskq_accept_head == NULL)
