@@ -150,6 +150,7 @@ struct psandbox_info {
 
 extern long int live_psandbox;
 
+ktime_t calculate_starting_penalty_ns(PSandbox *victim,ktime_t penalty_ns,PSandbox *noisy);
 void do_penalty(PSandbox *victim, ktime_t penalty_ns, unsigned int key) ;
 void do_freeze_psandbox(PSandbox *psandbox);
 void clean_psandbox(PSandbox *psandbox);
