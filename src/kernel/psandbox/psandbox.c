@@ -312,6 +312,7 @@ SYSCALL_DEFINE2(update_event, BoxEvent __user *, event, int, is_lazy) {
 						old_execution = current_execution;
 						penalty_ns = current_defer;
 						victim = cur->psandbox;
+						break;
 					}
 				}
 			}
@@ -336,7 +337,10 @@ SYSCALL_DEFINE2(update_event, BoxEvent __user *, event, int, is_lazy) {
 		}
 
 		if (penalty_ns > 10000 && victim) {
+			penalty_ns = calculate_starting_penalty_ns(victim,penalty_ns,psandbox);
 			do_penalty(victim,penalty_ns, key);
+		} else if (penalty_ns != 0){
+			pr_info("3. skip event: sleep psandbox %d, thread %d, defer time %llu\n", current->psandbox->bid, current->pid, penalty_ns);
 		}
 		break;
 	}
@@ -345,7 +349,11 @@ SYSCALL_DEFINE2(update_event, BoxEvent __user *, event, int, is_lazy) {
 
 	return 0;
 }
-// TODO: add delay penalty
+
+ktime_t calculate_starting_penalty_ns(PSandbox *victim,ktime_t penalty_ns,PSandbox *noisy){
+	return (int_sqrt64(penalty_ns*noisy->average_execution_time) - victim->average_execution_time);
+}
+
 void do_penalty(PSandbox *victim, ktime_t penalty_ns, unsigned int key) {
 	StatisticNode *stat_node = NULL;
 	StatisticNode *stat_cur = NULL;
