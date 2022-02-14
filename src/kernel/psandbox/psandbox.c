@@ -359,6 +359,8 @@ ktime_t calculate_starting_penalty_ns(PSandbox *victim,ktime_t penalty_ns,PSandb
 		return (int_sqrt64(penalty_ns*noisy->average_execution_time) - victim->average_execution_time);
 	case TAIL:
 		return 100 * victim->average_execution_time;
+	case GOOD:
+		return noisy->average_execution_time * noisy->rule.isolation_level/100
 	}
 	return 0;
 }
