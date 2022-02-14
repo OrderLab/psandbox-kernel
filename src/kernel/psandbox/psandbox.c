@@ -357,6 +357,8 @@ ktime_t calculate_starting_penalty_ns(PSandbox *victim,ktime_t penalty_ns,PSandb
 		return penalty_ns;
 	case AVERAGE:
 		return (int_sqrt64(penalty_ns*noisy->average_execution_time) - victim->average_execution_time);
+	case TAIL:
+		return 100 * victim->average_execution_time;
 	}
 	return 0;
 }
@@ -397,7 +399,7 @@ void do_penalty(PSandbox *victim, ktime_t penalty_ns, unsigned int key) {
 		schedule_hrtimeout(&penalty_ns,HRTIMER_MODE_REL);
 	} else {
 //		penalty_ns=2000000000;
-		pr_info("2.event: sleep psandbox %d, thread %d, defer time %u, score %d\n", current->psandbox->bid, current->pid, penalty_ns,stat_node->bad_action);
+		pr_info("2.event: sleep psandbox %d, thread %d, defer time %ums, score %d\n", current->psandbox->bid, current->pid, penalty_ns/1000000,stat_node->bad_action);
 		current->psandbox->total_penalty_time += penalty_ns;
 		schedule_hrtimeout(&penalty_ns,HRTIMER_MODE_REL);
 	}
@@ -633,7 +635,7 @@ int do_unbind(size_t addr){
 }
 
 void do_freeze_psandbox(PSandbox *psandbox){
-	struct timespec64 current_tm, total_time, last_unbind_start, expected_queue_out;
+	struct timespec64 current_tm, total_time, last_unbind_start;
 //	ktime_t average_defer;
 //	struct list_head temp;
 	ktime_t defer_tm;
@@ -671,9 +673,9 @@ void do_freeze_psandbox(PSandbox *psandbox){
 		psandbox->average_execution_time = psandbox->total_execution_time/psandbox->finished_activities;
 	}
 
-//	if (timespec64_to_ns(&psandbox->activity->execution_time) * psandbox->delay_ratio * live_psandbox < defer_tm) {
-//		psandbox->bad_activities++;
-//	}
+	if (timespec64_to_ns(&psandbox->activity->execution_time) * psandbox->delay_ratio  < defer_tm) {
+		psandbox->bad_activities++;
+	}
 //	if(psandbox->bid == 2)
 //		pr_info("call do freeze %d, victim id %d, key %lu \n",psandbox->bid,psandbox->activity->victim_id,psandbox->activity->key);
 	if (psandbox->activity->victim_id && psandbox->activity->key) {
@@ -684,27 +686,6 @@ void do_freeze_psandbox(PSandbox *psandbox){
 				do_penalty(victim,psandbox->activity->penalty_ns,psandbox->activity->key);
 		}
 	}
-//
-//	switch (psandbox->rule.type) {
-//		case ABSOLUTE:
-//			if (timespec64_to_ns(&total_time) > psandbox->rule.isolation_level ) {
-////			pr_info("after call freeze %ld, defer time %llu, execution time %llu\n", psandbox->bid,psandbox->average_defer_time, psandbox->average_execution_time);
-//			if (psandbox->is_nice == 0 && psandbox->bid == 7) {
-//				psandbox->is_nice = 1;
-//				pr_info("call nice for psandbox %d, nice is %d\n",psandbox->bid,task_nice(psandbox->current_task));
-//				set_user_nice(psandbox->current_task,19);
-//			}
-//		} else {
-//			if (psandbox->is_nice == 1) {
-//				pr_info("end nice for psandbox %d\n",psandbox->bid);
-//				psandbox->is_nice = 0;
-//				set_user_nice(psandbox->current_task,task_nice(psandbox->current_task)-1);
-//			}
-//
-//		}
-//		break;
-//		default: break;
-//	}
 
 	memset(psandbox->activity, 0, sizeof(Activity));
 	psandbox->activity->last_unbind_start = last_unbind_start;
