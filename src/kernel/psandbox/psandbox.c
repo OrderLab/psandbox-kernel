@@ -266,13 +266,13 @@ SYSCALL_DEFINE2(update_event, BoxEvent __user *, event, int, is_lazy) {
 				count++;
 				switch (cur->psandbox->rule.type) {
 					case RELATIVE:
-						if (cur->psandbox->average_defer_time * 100  < cur->psandbox->average_execution_time * cur->psandbox->rule.isolation_level ) {
+						if (cur->psandbox->average_defer_time * 1000 < 9 * cur->psandbox->average_execution_time * cur->psandbox->rule.isolation_level  ) {
 							continue;
 						}
 //						pr_info("after call continues %ld, defer time %llu, execution time %llu\n", cur->psandbox->bid,cur->psandbox->average_defer_time, cur->psandbox->average_execution_time);
 						break;
 					case SCALABLE:
-						if (cur->psandbox->average_defer_time * 100  < cur->psandbox->average_execution_time * cur->psandbox->rule.isolation_level * live_psandbox) {
+						if (cur->psandbox->average_defer_time * 1000  < 9 * cur->psandbox->average_execution_time * cur->psandbox->rule.isolation_level * live_psandbox) {
 							continue;
 						}
 //						pr_info("after call continues %ld, defer time %llu, execution time %llu\n", cur->psandbox->bid,cur->psandbox->average_defer_time, cur->psandbox->average_execution_time);
@@ -338,7 +338,7 @@ SYSCALL_DEFINE2(update_event, BoxEvent __user *, event, int, is_lazy) {
 		}
 
 		if (penalty_ns > 10000 && victim) {
-			penalty_ns = calculate_starting_penalty_ns(victim,penalty_ns,psandbox,1);
+			penalty_ns = calculate_starting_penalty_ns(victim,penalty_ns,psandbox,2);
 			do_penalty(victim,penalty_ns, key);
 		} else if (penalty_ns != 0){
 			pr_info("3. skip event: sleep psandbox %d, thread %d, defer time %llu\n", current->psandbox->bid, current->pid, penalty_ns);
@@ -360,7 +360,7 @@ ktime_t calculate_starting_penalty_ns(PSandbox *victim,ktime_t penalty_ns,PSandb
 	case TAIL:
 		return 100 * victim->average_execution_time;
 	case GOOD:
-		return noisy->average_execution_time * noisy->rule.isolation_level/100
+		return noisy->average_execution_time * noisy->rule.isolation_level/100;
 	}
 	return 0;
 }
@@ -369,12 +369,13 @@ void do_penalty(PSandbox *victim, ktime_t penalty_ns, unsigned int key) {
 	StatisticNode *stat_node = NULL;
 	StatisticNode *stat_cur = NULL;
 	struct hlist_node *tmp;
-	ktime_t old_slack = victim->total_defer_time;
-	ktime_t new_slack = victim->total_execution_time;
+	ktime_t old_execution;
+	ktime_t old_slack = victim->average_defer_time;
+	ktime_t new_slack = victim->average_execution_time;
 
 	read_lock(&stat_map_lock);
 	hash_for_each_possible_safe (stat_map, stat_cur, tmp, node, key) {
-		if (stat_cur->psandbox == victim) {
+		if (stat_cur->psandbox == current->psandbox) {
 			stat_node = stat_cur;
 			break;
 		}
@@ -401,18 +402,22 @@ void do_penalty(PSandbox *victim, ktime_t penalty_ns, unsigned int key) {
 		schedule_hrtimeout(&penalty_ns,HRTIMER_MODE_REL);
 	} else {
 //		penalty_ns=2000000000;
-		pr_info("2.event: sleep psandbox %d, thread %d, defer time %ums, score %d\n", current->psandbox->bid, current->pid, penalty_ns/1000000,stat_node->bad_action);
+		pr_info("2.event: sleep psandbox %lu for psandbox %lu in the key %u, thread %d, defer time %lu ms, score %d\n", current->psandbox->bid, victim->bid, key, current->pid, penalty_ns/1000000,stat_node->bad_action);
 		current->psandbox->total_penalty_time += penalty_ns;
 		schedule_hrtimeout(&penalty_ns,HRTIMER_MODE_REL);
 	}
-
-	new_slack *= victim->total_defer_time;
-	old_slack *= victim->total_execution_time;
+	old_execution = new_slack;
+	new_slack *= victim->average_defer_time;
+	old_slack *= victim->average_execution_time;
 	switch (victim->rule.type) {
 	case RELATIVE:
-		if (victim->total_defer_time * 100 > victim->total_execution_time * victim->rule.isolation_level) {
+		if (victim->average_defer_time * 100 > victim->average_execution_time * victim->rule.isolation_level) {
+			ktime_t gap,detla;
 			spin_lock(&stat_node->stat_lock);
 			stat_node->bad_action++;
+			gap = victim->average_defer_time * 100 / victim->average_execution_time - victim->rule.isolation_level;
+			detla = (new_slack - old_slack) / (victim->average_defer_time * old_execution * penalty_ns);
+			pr_info("the ratio is %d\n",gap/detla);
 			spin_unlock(&stat_node->stat_lock);
 		} else if (new_slack < old_slack)  {
 			spin_lock(&stat_node->stat_lock);
@@ -425,7 +430,7 @@ void do_penalty(PSandbox *victim, ktime_t penalty_ns, unsigned int key) {
 		}
 		break;
 		case SCALABLE:
-			if (victim->total_defer_time * 100 > victim->total_execution_time * victim->rule.isolation_level * live_psandbox) {
+			if (victim->average_defer_time * 100 > victim->average_defer_time * victim->rule.isolation_level * live_psandbox) {
 				spin_lock(&stat_node->stat_lock);
 				stat_node->bad_action++;
 				spin_unlock(&stat_node->stat_lock);
@@ -544,7 +549,7 @@ SYSCALL_DEFINE1(bind_psandbox, size_t, addr)
 	write_unlock(&transfers_lock);
 
 	if (!psandbox) {
-		printk(KERN_INFO "can't find psandbox to bind %llu\n",addr);
+		printk(KERN_INFO "can't find psandbox to bind %lu\n",addr);
 		return -1;
 	}
 
