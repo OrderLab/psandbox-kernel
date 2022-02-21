@@ -66,9 +66,7 @@ SYSCALL_DEFINE3(create_psandbox, int, type, int, isolation_level, int, priority)
 	psandbox->finished_activities = 0;
 	psandbox->action_level = LOW_PRIORITY;
 	psandbox->is_white = 0;
-	psandbox->delay_ratio = 1;
 	psandbox->is_futex =0;
-	psandbox->tail_requirement = 90;
 	psandbox->bad_activities = 0;
 	psandbox->creator_psandbox = current;
 	psandbox->is_lazy = 0;
@@ -609,26 +607,6 @@ SYSCALL_DEFINE1(bind_psandbox, size_t, addr)
 	return psandbox->current_task->pid;
 }
 
-SYSCALL_DEFINE2(penalize_psandbox, long int, penalty_us,unsigned int, key)
-{
-	ktime_t penalty = penalty_us * 1000;
-	struct task_struct *task;
-	if(!current->psandbox)
-		return 0;
-
-	task = find_get_task_by_vpid(current->psandbox->activity->victim_id);
-	if(task) {
-
-		PSandbox *victim = task->psandbox;
-		if(victim)
-			do_penalty(victim,penalty,key,false);
-
-	}
-
-
-	return 0;
-}
-
 int do_unbind(size_t addr){
 	PSandboxNode *a = NULL;
 	int i;
@@ -701,20 +679,15 @@ void do_freeze_psandbox(PSandbox *psandbox){
 
 	defer_tm = timespec64_to_ns(&psandbox->activity->defer_time);
 	psandbox->total_defer_time += defer_tm;
-//	average_defer = psandbox->total_defer_time/psandbox->finished_activities;
-	spin_lock_irqsave(&stat_lock, flags);
-//	average_defer_time = average_defer_time * live_psandbox + (average_defer - psandbox->average_defer_time);
-	spin_unlock_irqrestore(&stat_lock, flags);
 	if (psandbox->finished_activities) {
 		psandbox->average_defer_time = psandbox->total_defer_time/psandbox->finished_activities;
 		psandbox->average_execution_time = psandbox->total_execution_time/psandbox->finished_activities;
 	}
 
-	if (timespec64_to_ns(&psandbox->activity->execution_time) * psandbox->delay_ratio  < defer_tm) {
+	if (timespec64_to_ns(&psandbox->activity->execution_time) * psandbox->rule.isolation_level  < timespec64_to_ns(&psandbox->activity->defer_time) * 100 ) {
 		psandbox->bad_activities++;
 	}
-//	if(psandbox->bid == 2)
-//		pr_info("call do freeze %d, victim id %d, key %lu \n",psandbox->bid,psandbox->activity->victim_id,psandbox->activity->key);
+
 	if (psandbox->activity->victim_id && psandbox->activity->key) {
 		struct task_struct *task = find_get_task_by_vpid(psandbox->activity->victim_id);
 		if(task) {
@@ -735,8 +708,8 @@ void clean_psandbox(PSandbox *psandbox) {
 	StatisticNode *stat_cur;
 	struct delaying_start *pos,*temp;
 	if (psandbox->finished_activities > 0) {
-		pr_info( "psandbox syscall called psandbox_release id =%ld by the thread %d, total penalty time %llu ms, total defer time %llu ms, total execution time %llu ms \n",
-			 psandbox->bid, current->pid,psandbox->total_penalty_time/1000000,psandbox->total_defer_time/1000000, psandbox->total_execution_time/1000000);
+		pr_info( "psandbox syscall called psandbox_release id =%ld by the thread %d, total penalty time %llu ms, total defer time %llu ms, total execution time %llu ms, the ratio is %d\n",
+			 psandbox->bid, current->pid,psandbox->total_penalty_time/1000000,psandbox->total_defer_time/1000000, psandbox->total_execution_time/1000000, psandbox->bad_activities*100/psandbox->finished_activities);
 	} else {
 		pr_info("psandbox syscall called psandbox_release id =%ld by the thread %d\n",
 		       psandbox->bid, current->pid);

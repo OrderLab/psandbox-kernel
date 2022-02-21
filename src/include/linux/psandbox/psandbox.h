@@ -112,8 +112,6 @@ struct psandbox_info {
 	struct task_struct *current_task;
 	struct task_struct *creator_psandbox;
 	enum enum_psandbox_state state;
-	int delay_ratio;
-	int tail_requirement;
 	Activity *activity;
 	long int finished_activities;
 	long int bad_activities;
