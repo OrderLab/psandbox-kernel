@@ -31,7 +31,7 @@ __cacheline_aligned DEFINE_RWLOCK(psandbox_lock);
 __cacheline_aligned DEFINE_RWLOCK(stat_map_lock);
 #define COMPENSATION_TICKET_NUMBER	1000L
 #define BASE_RATE 1
-#define LONG_SECTION 100
+#define LONG_SECTION 1000
 #define STEP 20
 
 
@@ -341,10 +341,10 @@ SYSCALL_DEFINE2(update_event, BoxEvent __user *, event, int, is_lazy) {
 
 		if (penalty_ns > 10000 && victim) {
 			if (penalty_ns > victim->average_execution_time * LONG_SECTION) {
-				penalty_ns = calculate_starting_penalty_ns(victim,penalty_ns,psandbox,2);
+				penalty_ns = calculate_starting_penalty_ns(victim,penalty_ns,psandbox,4);
 				do_penalty(victim,penalty_ns, key,true);
 			} else {
-				penalty_ns = calculate_starting_penalty_ns(victim,penalty_ns,psandbox,2);
+				penalty_ns = calculate_starting_penalty_ns(victim,penalty_ns,psandbox,5);
 				do_penalty(victim,penalty_ns, key,false);
 			}
 
@@ -369,6 +369,16 @@ ktime_t calculate_starting_penalty_ns(PSandbox *victim,ktime_t penalty_ns,PSandb
 			return 100 * victim->average_execution_time;
 		case GOOD:
 			return noisy->average_execution_time * noisy->rule.isolation_level/100;
+		case LONG: {
+			ktime_t average_p =  int_sqrt64(penalty_ns*noisy->average_execution_time) - victim->average_execution_time;
+			ktime_t good_p = noisy->average_execution_time * noisy->rule.isolation_level/100;
+			return average_p > good_p? good_p: average_p;
+		}
+		case SHORT: {
+			ktime_t tail_p =  100 * victim->average_execution_time;
+			ktime_t good_p = noisy->average_execution_time * noisy->rule.isolation_level/100;
+			return tail_p > good_p? good_p: tail_p;
+		}
 		default:
 			break;
 	}
@@ -411,11 +421,11 @@ void do_penalty(PSandbox *victim, ktime_t penalty_ns, unsigned int key, int is_l
 
 	if (penalty_ns > 10000000000) {
 		penalty_ns = 10000000000;
-		pr_info("2.event: sleep psandbox %lu for psandbox %lu in the key %u, thread %d, defer time 10 s\n", current->psandbox->bid, victim->bid, key, current->pid);
+//		pr_info("2.event: sleep psandbox %lu for psandbox %lu in the key %u, thread %d, defer time 10 s\n", current->psandbox->bid, victim->bid, key, current->pid);
 		current->psandbox->total_penalty_time += 10000000000;
 		schedule_hrtimeout(&penalty_ns,HRTIMER_MODE_REL);
 	} else {
-		pr_info("2.event: sleep psandbox %lu for psandbox %lu in the key %u, thread %d, defer time %lu ms\n", current->psandbox->bid, victim->bid, key, current->pid, penalty_ns/1000000);
+//		pr_info("2.event: sleep psandbox %lu for psandbox %lu in the key %u, thread %d, defer time %lu ms\n", current->psandbox->bid, victim->bid, key, current->pid, penalty_ns/1000000);
 		current->psandbox->total_penalty_time += penalty_ns;
 		schedule_hrtimeout(&penalty_ns,HRTIMER_MODE_REL);
 	}
@@ -725,8 +735,8 @@ void clean_psandbox(PSandbox *psandbox) {
 	StatisticNode *stat_cur;
 	struct delaying_start *pos,*temp;
 	if (psandbox->finished_activities > 0) {
-		pr_info( "psandbox syscall called psandbox_release id =%ld by the thread %d, total penalty time %llu ns, total defer time %llu ns, total execution time %llu ns \n",
-		       psandbox->bid, current->pid,psandbox->total_penalty_time,psandbox->total_defer_time, psandbox->total_execution_time);
+		pr_info( "psandbox syscall called psandbox_release id =%ld by the thread %d, total penalty time %llu ms, total defer time %llu ms, total execution time %llu ms \n",
+			 psandbox->bid, current->pid,psandbox->total_penalty_time/1000000,psandbox->total_defer_time/1000000, psandbox->total_execution_time/1000000);
 	} else {
 		pr_info("psandbox syscall called psandbox_release id =%ld by the thread %d\n",
 		       psandbox->bid, current->pid);
