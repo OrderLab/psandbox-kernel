@@ -30,8 +30,9 @@ __cacheline_aligned DEFINE_RWLOCK(holders_lock);
 __cacheline_aligned DEFINE_RWLOCK(psandbox_lock);
 __cacheline_aligned DEFINE_RWLOCK(stat_map_lock);
 #define COMPENSATION_TICKET_NUMBER	1000L
-#define BASE_RATE 5
+#define BASE_RATE 1
 #define LONG_SECTION 100
+#define STEP 20
 
 
 static DEFINE_SPINLOCK(stat_lock);
@@ -397,11 +398,11 @@ void do_penalty(PSandbox *victim, ktime_t penalty_ns, unsigned int key, int is_l
 
 	if (is_long) {
 		penalty_ns *= current->psandbox->step;
-		pr_info("1.penalty time %u ms, step %d\n",penalty_ns/1000000, current->psandbox->step);
+//		pr_info("1.penalty time %u ms, step %d\n",penalty_ns/1000000, current->psandbox->step);
 	} else {
 		if (stat_node->bad_action && stat_node->bad_action > BASE_RATE) {
 			penalty_ns *= stat_node->bad_action / BASE_RATE;
-			pr_info("2.penalty time %u ms, step %d\n",penalty_ns/1000000, stat_node->step);
+//			pr_info("2.penalty time %u ms, score %d\n",penalty_ns/1000000, stat_node->bad_action);
 		}
 	}
 
@@ -410,11 +411,11 @@ void do_penalty(PSandbox *victim, ktime_t penalty_ns, unsigned int key, int is_l
 
 	if (penalty_ns > 10000000000) {
 		penalty_ns = 10000000000;
-//		pr_info("1.event: sleep psandbox %d, thread %d, defer time %u, score %d\n", current->psandbox->bid, current->pid, penalty_ns,stat_node->bad_action);
+		pr_info("2.event: sleep psandbox %lu for psandbox %lu in the key %u, thread %d, defer time 10 s\n", current->psandbox->bid, victim->bid, key, current->pid);
 		current->psandbox->total_penalty_time += 10000000000;
 		schedule_hrtimeout(&penalty_ns,HRTIMER_MODE_REL);
 	} else {
-		pr_info("2.event: sleep psandbox %lu for psandbox %lu in the key %u, thread %d, defer time %lu ms, score %d\n", current->psandbox->bid, victim->bid, key, current->pid, penalty_ns/1000000,stat_node->bad_action);
+		pr_info("2.event: sleep psandbox %lu for psandbox %lu in the key %u, thread %d, defer time %lu ms\n", current->psandbox->bid, victim->bid, key, current->pid, penalty_ns/1000000);
 		current->psandbox->total_penalty_time += penalty_ns;
 		schedule_hrtimeout(&penalty_ns,HRTIMER_MODE_REL);
 	}
@@ -427,19 +428,17 @@ void do_penalty(PSandbox *victim, ktime_t penalty_ns, unsigned int key, int is_l
 			ktime_t gap,detla;
 			spin_lock(&stat_node->stat_lock);
 			stat_node->bad_action++;
-			gap = victim->average_defer_time * 100 / victim->average_execution_time - victim->rule.isolation_level;
-			detla = (new_slack - old_slack) * 100 / (victim->average_defer_time * old_execution * stat_node->step);
-			if(detla <= 0)
-				detla = 1;
-			if (is_long) {
-				current->psandbox->step = gap/detla;
-				pr_info("the ratio is %d\n",current->psandbox->step);
-			} else {
-				stat_node->step = gap/detla;
-				pr_info("the node ratio is %d\n",current->psandbox->step);
-			}
-//			pr_info("the ratio is %d\n",step);
 			spin_unlock(&stat_node->stat_lock);
+			if (is_long) {
+				gap = victim->average_defer_time * 100 / victim->average_execution_time - victim->rule.isolation_level;
+				detla = (new_slack - old_slack) * 100 / (victim->average_defer_time * old_execution * stat_node->step);
+				if(detla <= 0)
+					detla = 1;
+				current->psandbox->step = (STEP*gap)/(detla*100);
+				if (current->psandbox->step <= 0)
+					current->psandbox->step = 1;
+				//				pr_info("the ratio is %d\n",current->psandbox->step);
+			}
 		} else if (new_slack < old_slack)  {
 			spin_lock(&stat_node->stat_lock);
 			stat_node->bad_action++;
@@ -612,7 +611,7 @@ SYSCALL_DEFINE2(penalize_psandbox, long int, penalty_us,unsigned int, key)
 
 		PSandbox *victim = task->psandbox;
 		if(victim)
-			do_penalty(victim,penalty,key);
+			do_penalty(victim,penalty,key,false);
 
 	}
 
@@ -711,7 +710,7 @@ void do_freeze_psandbox(PSandbox *psandbox){
 		if(task) {
 			PSandbox *victim = task->psandbox;
 			if(victim)
-				do_penalty(victim,psandbox->activity->penalty_ns,psandbox->activity->key);
+				do_penalty(victim,psandbox->activity->penalty_ns,psandbox->activity->key,false);
 		}
 	}
 
