@@ -341,10 +341,12 @@ SYSCALL_DEFINE2(update_event, BoxEvent __user *, event, int, is_lazy) {
 		if (penalty_ns > 10000 && victim) {
 			if (penalty_ns > victim->average_execution_time * LONG_SECTION) {
 				penalty_ns = calculate_starting_penalty_ns(victim,penalty_ns,psandbox,2);
+				do_penalty(victim,penalty_ns, key,true);
 			} else {
 				penalty_ns = calculate_starting_penalty_ns(victim,penalty_ns,psandbox,2);
+				do_penalty(victim,penalty_ns, key,false);
 			}
-			do_penalty(victim,penalty_ns, key);
+
 		} else if (penalty_ns != 0){
 			pr_info("3. skip event: sleep psandbox %d, thread %d, defer time %llu\n", current->psandbox->bid, current->pid, penalty_ns);
 		}
@@ -372,7 +374,7 @@ ktime_t calculate_starting_penalty_ns(PSandbox *victim,ktime_t penalty_ns,PSandb
 	return 0;
 }
 
-void do_penalty(PSandbox *victim, ktime_t penalty_ns, unsigned int key) {
+void do_penalty(PSandbox *victim, ktime_t penalty_ns, unsigned int key, int is_long) {
 	StatisticNode *stat_node = NULL;
 	StatisticNode *stat_cur = NULL;
 	struct hlist_node *tmp;
@@ -380,34 +382,29 @@ void do_penalty(PSandbox *victim, ktime_t penalty_ns, unsigned int key) {
 	ktime_t old_slack = victim->average_defer_time;
 	ktime_t new_slack = victim->average_execution_time;
 
-	if (penalty_ns > victim->average_execution_time * LONG_SECTION) {
+	read_lock(&stat_map_lock);
+	hash_for_each_possible_safe (stat_map, stat_cur, tmp, node, key) {
+		if (stat_cur->psandbox == current->psandbox) {
+			stat_node = stat_cur;
+			break;
+		}
+	}
+	read_unlock(&stat_map_lock);
+	if(!stat_node) {
+		pr_info("Can't find the psandbox %ld in the stat map with key %u\n",victim->bid,key);
+		return;
+	}
+
+	if (is_long) {
 		penalty_ns *= current->psandbox->step;
+		pr_info("1.penalty time %u ms, step %d\n",penalty_ns/1000000, current->psandbox->step);
 	} else {
-		read_lock(&stat_map_lock);
-		hash_for_each_possible_safe (stat_map, stat_cur, tmp, node, key) {
-			if (stat_cur->psandbox == current->psandbox) {
-				stat_node = stat_cur;
-				break;
-			}
-		}
-		read_unlock(&stat_map_lock);
-
-		if(!stat_node) {
-			pr_info("Can't find the psandbox %ld in the stat map with key %u\n",victim->bid,key);
-			return;
-		}
-
 		if (stat_node->bad_action && stat_node->bad_action > BASE_RATE) {
-			//		penalty_ns *= stat_node->bad_action / BASE_RATE;
-			penalty_ns *= stat_node->step;
-			pr_info("penalty time %u ms, step %d\n",penalty_ns/1000000, stat_node->step);
+			penalty_ns *= stat_node->bad_action / BASE_RATE;
+			pr_info("2.penalty time %u ms, step %d\n",penalty_ns/1000000, stat_node->step);
 		}
 	}
 
-
-
-
-//	victim->state = BOX_AWAKE;
 	wake_up_process(victim->current_task);
 	__set_current_state(TASK_INTERRUPTIBLE);
 
@@ -428,17 +425,18 @@ void do_penalty(PSandbox *victim, ktime_t penalty_ns, unsigned int key) {
 	case RELATIVE:
 		if (victim->average_defer_time * 100 > victim->average_execution_time * victim->rule.isolation_level) {
 			ktime_t gap,detla;
-			int step;
 			spin_lock(&stat_node->stat_lock);
 			stat_node->bad_action++;
 			gap = victim->average_defer_time * 100 / victim->average_execution_time - victim->rule.isolation_level;
 			detla = (new_slack - old_slack) * 100 / (victim->average_defer_time * old_execution * stat_node->step);
 			if(detla <= 0)
 				detla = 1;
-			if (penalty_ns > victim->average_execution_time * LONG_SECTION) {
+			if (is_long) {
 				current->psandbox->step = gap/detla;
+				pr_info("the ratio is %d\n",current->psandbox->step);
 			} else {
 				stat_node->step = gap/detla;
+				pr_info("the node ratio is %d\n",current->psandbox->step);
 			}
 //			pr_info("the ratio is %d\n",step);
 			spin_unlock(&stat_node->stat_lock);
