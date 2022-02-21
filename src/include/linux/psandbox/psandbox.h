@@ -138,6 +138,7 @@ struct psandbox_info {
 	PSandboxNode competitors[COMPETITORS_SIZE];
 	struct list_head delay_list;
 	int is_lazy;
+	int step;
 	// int is_accept;
 	enum enum_unbind_flag unbind_flags;
 	int requeued;
