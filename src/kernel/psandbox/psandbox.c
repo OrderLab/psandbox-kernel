@@ -167,8 +167,7 @@ SYSCALL_DEFINE2(update_event, BoxEvent __user *, event, int, is_lazy) {
 
 	switch (event_type) {
 	case PREPARE:{
-		int is_duplicate = false, is_first = true;
-		struct delaying_start *pos;
+		int is_duplicate = false;
 		PSandboxNode* node = NULL;
 		int i;
 
@@ -389,6 +388,7 @@ void do_penalty(PSandbox *victim, ktime_t penalty_ns, unsigned int key) {
 
 	if (stat_node->bad_action && stat_node->bad_action > BASE_RATE)
 		penalty_ns *= stat_node->bad_action / BASE_RATE;
+		penalty_ns *= stat_node->step;
 
 
 //	victim->state = BOX_AWAKE;
@@ -413,11 +413,15 @@ void do_penalty(PSandbox *victim, ktime_t penalty_ns, unsigned int key) {
 	case RELATIVE:
 		if (victim->average_defer_time * 100 > victim->average_execution_time * victim->rule.isolation_level) {
 			ktime_t gap,detla;
+			int step;
 			spin_lock(&stat_node->stat_lock);
 			stat_node->bad_action++;
 			gap = victim->average_defer_time * 100 / victim->average_execution_time - victim->rule.isolation_level;
-			detla = (new_slack - old_slack) / (victim->average_defer_time * old_execution * penalty_ns);
-			pr_info("the ratio is %d\n",gap/detla);
+			detla = (new_slack - old_slack) * 100 / (victim->average_defer_time * old_execution * stat_node->bad_action++);
+			if(detla < 0)
+				detla = 1;
+			stat_node->step = gap/detla;
+//			pr_info("the ratio is %d\n",step);
 			spin_unlock(&stat_node->stat_lock);
 		} else if (new_slack < old_slack)  {
 			spin_lock(&stat_node->stat_lock);

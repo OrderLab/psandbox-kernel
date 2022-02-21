@@ -103,6 +103,7 @@ typedef struct statistics_node {
 	PSandbox *psandbox;
 	int bad_action;
 	struct hlist_node node;
+	int step;
 	spinlock_t stat_lock;
 } StatisticNode;
 
