@@ -381,10 +381,10 @@ SYSCALL_DEFINE2(update_event, BoxEvent __user *, event, int, is_lazy) {
 
 		if (penalty_ns > 10000 && victim) {
 			if (penalty_ns > victim->average_execution_time * LONG_SECTION) {
-				penalty_ns = calculate_starting_penalty_ns(victim,penalty_ns,psandbox,4);
+				penalty_ns = calculate_starting_penalty_ns(victim,penalty_ns,psandbox,2);
 				do_penalty(victim,penalty_ns, key,true);
 			} else {
-				penalty_ns = calculate_starting_penalty_ns(victim,penalty_ns,psandbox,5);
+				penalty_ns = calculate_starting_penalty_ns(victim,penalty_ns,psandbox,2);
 				do_penalty(victim,penalty_ns, key,false);
 			}
 
@@ -450,7 +450,7 @@ void do_penalty(PSandbox *victim, ktime_t penalty_ns, unsigned int key, int is_l
 		penalty_ns *= current->psandbox->step;
 //		pr_info("1.penalty time %u ms, step %d\n",penalty_ns/1000000, current->psandbox->step);
 	} else {
-		if (stat_node->bad_action && stat_node->bad_action > BASE_RATE) {
+		if (stat_node->bad_action ) {
 			penalty_ns *= stat_node->bad_action / BASE_RATE;		
 //			pr_info("2.penalty time %u ms, score %d\n",penalty_ns/1000000, stat_node->bad_action);
 		}
