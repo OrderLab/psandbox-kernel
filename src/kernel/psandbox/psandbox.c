@@ -21,7 +21,7 @@
 struct list_head white_list;
 struct list_head psandbox_list;
 long int psandbox_id = 1;
-long int live_psandbox = 0;
+int live_psandbox = 0;
 ktime_t average_defer_time = 0 ;
 
 __cacheline_aligned DEFINE_RWLOCK(transfers_lock);
@@ -122,29 +122,51 @@ SYSCALL_DEFINE0(activate_psandbox)
 {
 	PSandbox *psandbox = current->psandbox;
 	DemandNode demand[100];
-	int capacity = 0, total = 0, fair, current_demand = psandbox->average_execution_time-psandbox->average_defer_time;
+	int capacity = 0, total = 0, fair;
 	int i = 0;
 	int length = 0;
-	int slowdown = psandbox->average_execution_time/psandbox->average_defer_time;
+
 	ktime_t penalty_ns;
+	PSandbox *pos = NULL;
 	if (!psandbox) {
 		printk(KERN_INFO "there is no psandbox\n");
 		return 0;
 	}
+
 	psandbox->state = BOX_ACTIVE;
 	ktime_get_real_ts64(&psandbox->activity->execution_start);
+
+
 	if (psandbox->rule.is_retro) {
+		int slowdown;
+		int current_demand;
+		if (psandbox->average_defer_time == 0) {
+			return 0;
+		} else {
+			slowdown = psandbox->average_execution_time/psandbox->average_defer_time;
+			current_demand = psandbox->average_execution_time-psandbox->average_defer_time;
+		}
+
 		list_for_each_entry(pos,&psandbox_list,list) {
-			int load = pos->average_execution_time-pos->average_defer_time;
+			int load = pos->average_execution_time -
+				   pos->average_defer_time;
 			demand[i].demand = load;
 			demand[i].psandbox = pos;
-			capacity += load/2;
+			capacity += load / 2;
 		}
 		total = capacity;
 		do {
-			int assigned = total/live_psandbox;
+			int assigned;
+			if (live_psandbox == 0) {
+				printk(KERN_INFO "there is no live_psandbox\n");
+				break;
+			} else {
+				assigned = total/live_psandbox;
+			}
+
 			int unused = 0;
-			for (int j = 0; j < i; j++) {
+			int j;
+			for (j=0; j < i; j++) {
 				if (assigned > demand[j].demand) {
 					unused = assigned - demand[j].demand;
 					if (demand[j].psandbox == psandbox) {
@@ -157,7 +179,7 @@ SYSCALL_DEFINE0(activate_psandbox)
 				}
 			}
 			total = unused;
-		} while (total > 0)
+		} while (total > 0);
 
 		if (slowdown > 10 && fair < current_demand) {
 			penalty_ns = current_demand - fair;
