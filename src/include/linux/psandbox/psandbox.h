@@ -111,6 +111,7 @@ typedef struct statistics_node {
 typedef struct demand_node{
 	PSandbox *psandbox;
 	int demand;
+	int is_satisfied;
 }DemandNode;
 
 struct psandbox_info {

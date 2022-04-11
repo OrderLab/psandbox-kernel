@@ -21,7 +21,7 @@
 struct list_head white_list;
 struct list_head psandbox_list;
 long int psandbox_id = 1;
-int live_psandbox = 0;
+long int live_psandbox = 0;
 ktime_t average_defer_time = 0 ;
 
 __cacheline_aligned DEFINE_RWLOCK(transfers_lock);
@@ -124,7 +124,6 @@ SYSCALL_DEFINE0(activate_psandbox)
 	DemandNode demand[100];
 	int capacity = 0, total = 0, fair;
 	int i = 0;
-	int length = 0;
 
 	ktime_t penalty_ns;
 	PSandbox *pos = NULL;
@@ -143,32 +142,42 @@ SYSCALL_DEFINE0(activate_psandbox)
 		if (psandbox->average_defer_time == 0) {
 			return 0;
 		} else {
-			slowdown = psandbox->average_execution_time/psandbox->average_defer_time;
+			slowdown = psandbox->average_execution_time/(psandbox->average_execution_time-psandbox->average_defer_time);
 			current_demand = psandbox->average_execution_time-psandbox->average_defer_time;
 		}
 
+		write_lock(&psandbox_lock);
 		list_for_each_entry(pos,&psandbox_list,list) {
 			int load = pos->average_execution_time -
 				   pos->average_defer_time;
 			demand[i].demand = load;
 			demand[i].psandbox = pos;
+			demand[i].is_satisfied = 0;
+			i++;
 			capacity += load / 2;
 		}
 		total = capacity;
+		int unsatisfied = i;
 		do {
 			int assigned;
-			if (live_psandbox == 0) {
+			if ( i == 0) {
 				printk(KERN_INFO "there is no live_psandbox\n");
 				break;
 			} else {
-				assigned = total/live_psandbox;
+				assigned = total/unsatisfied;
 			}
 
 			int unused = 0;
 			int j;
 			for (j=0; j < i; j++) {
+				if (demand[j].is_satisfied) {
+					continue;
+				}
+
 				if (assigned > demand[j].demand) {
 					unused = assigned - demand[j].demand;
+					unsatisfied--;
+					demand[j].is_satisfied = true;
 					if (demand[j].psandbox == psandbox) {
 						fair += demand[j].demand;
 					}
@@ -179,12 +188,23 @@ SYSCALL_DEFINE0(activate_psandbox)
 				}
 			}
 			total = unused;
+//			printk(KERN_INFO "The total is %d")
 		} while (total > 0);
 
-		if (slowdown > 10 && fair < current_demand) {
-			penalty_ns = current_demand - fair;
-			schedule_hrtimeout(&penalty_ns,HRTIMER_MODE_REL);
+		list_for_each_entry(pos,&psandbox_list,list) {
+			if (pos->average_defer_time == 0 || pos == psandbox ) {
+				continue;
+			} else {
+				slowdown = pos->average_execution_time/(pos->average_execution_time-pos->average_defer_time);
+			}
+			if (slowdown > 10 && fair < current_demand) {
+				penalty_ns = current_demand - fair;
+				schedule_hrtimeout(&penalty_ns,HRTIMER_MODE_REL);
+				break;
+			}
 		}
+		write_unlock(&psandbox_lock);
+
 	}
 	return 0;
 }
