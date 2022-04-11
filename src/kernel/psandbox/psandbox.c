@@ -133,37 +133,37 @@ SYSCALL_DEFINE0(activate_psandbox)
 	}
 	psandbox->state = BOX_ACTIVE;
 	ktime_get_real_ts64(&psandbox->activity->execution_start);
-//	if (psandbox->rule.is_retro) {
-//		list_for_each_entry(pos,&psandbox_list,list) {
-//			int load = pos->average_execution_time-pos->average_defer_time;
-//			demand[i].demand = load;
-//			demand[i].psandbox = pos;
-//			capacity += load/2;
-//		}
-//		total = capacity;
-//		do {
-//			int assigned = total/live_psandbox;
-//			int unused = 0;
-//			for (int j = 0; j < i; j++) {
-//				if (assigned > demand[j].demand) {
-//					unused = assigned - demand[j].demand;
-//					if (demand[j].psandbox == psandbox) {
-//						fair += demand[j].demand;
-//					}
-//				} else {
-//					if (demand[j].psandbox == psandbox) {
-//						fair += assigned;
-//					}
-//				}
-//			}
-//			total = unused;
-//		} while (total > 0)
-//
-//		if (slowdown > 10 && fair < current_demand) {
-//			penalty_ns = current_demand - fair;
-//			schedule_hrtimeout(&penalty_ns,HRTIMER_MODE_REL);
-//		}
-//	}
+	if (psandbox->rule.is_retro) {
+		list_for_each_entry(pos,&psandbox_list,list) {
+			int load = pos->average_execution_time-pos->average_defer_time;
+			demand[i].demand = load;
+			demand[i].psandbox = pos;
+			capacity += load/2;
+		}
+		total = capacity;
+		do {
+			int assigned = total/live_psandbox;
+			int unused = 0;
+			for (int j = 0; j < i; j++) {
+				if (assigned > demand[j].demand) {
+					unused = assigned - demand[j].demand;
+					if (demand[j].psandbox == psandbox) {
+						fair += demand[j].demand;
+					}
+				} else {
+					if (demand[j].psandbox == psandbox) {
+						fair += assigned;
+					}
+				}
+			}
+			total = unused;
+		} while (total > 0)
+
+		if (slowdown > 10 && fair < current_demand) {
+			penalty_ns = current_demand - fair;
+			schedule_hrtimeout(&penalty_ns,HRTIMER_MODE_REL);
+		}
+	}
 	return 0;
 }
 
