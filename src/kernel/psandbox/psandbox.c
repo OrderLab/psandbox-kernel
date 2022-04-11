@@ -77,6 +77,7 @@ SYSCALL_DEFINE3(create_psandbox, int, type, int, isolation_level, int, priority)
 	psandbox->count = 0;
 	psandbox->rule.type = type;
 	psandbox->rule.isolation_level = isolation_level;
+	psandbox->rule.is_retro = true;
 	psandbox->priority = priority;
 	psandbox->is_nice = 0;
 	psandbox->step = 1;
@@ -120,12 +121,49 @@ SYSCALL_DEFINE1(release_psandbox, int, pid)
 SYSCALL_DEFINE0(activate_psandbox)
 {
 	PSandbox *psandbox = current->psandbox;
+	DemandNode demand[100];
+	int capacity = 0, total = 0, fair, current_demand = psandbox->average_execution_time-psandbox->average_defer_time;
+	int i = 0;
+	int length = 0;
+	int slowdown = psandbox->average_execution_time/psandbox->average_defer_time;
+	ktime_t penalty_ns;
 	if (!psandbox) {
 		printk(KERN_INFO "there is no psandbox\n");
 		return 0;
 	}
 	psandbox->state = BOX_ACTIVE;
 	ktime_get_real_ts64(&psandbox->activity->execution_start);
+//	if (psandbox->rule.is_retro) {
+//		list_for_each_entry(pos,&psandbox_list,list) {
+//			int load = pos->average_execution_time-pos->average_defer_time;
+//			demand[i].demand = load;
+//			demand[i].psandbox = pos;
+//			capacity += load/2;
+//		}
+//		total = capacity;
+//		do {
+//			int assigned = total/live_psandbox;
+//			int unused = 0;
+//			for (int j = 0; j < i; j++) {
+//				if (assigned > demand[j].demand) {
+//					unused = assigned - demand[j].demand;
+//					if (demand[j].psandbox == psandbox) {
+//						fair += demand[j].demand;
+//					}
+//				} else {
+//					if (demand[j].psandbox == psandbox) {
+//						fair += assigned;
+//					}
+//				}
+//			}
+//			total = unused;
+//		} while (total > 0)
+//
+//		if (slowdown > 10 && fair < current_demand) {
+//			penalty_ns = current_demand - fair;
+//			schedule_hrtimeout(&penalty_ns,HRTIMER_MODE_REL);
+//		}
+//	}
 	return 0;
 }
 
@@ -173,6 +211,7 @@ SYSCALL_DEFINE2(update_event, BoxEvent __user *, event, int, is_lazy) {
 		int i;
 
 		psandbox->activity->activity_state = ACTIVITY_WAITING;
+
 
 		//Add event to the competitor map, update the defer time
 		for (i = 0; i< COMPETITORS_SIZE ; ++i) {
@@ -254,6 +293,9 @@ SYSCALL_DEFINE2(update_event, BoxEvent __user *, event, int, is_lazy) {
 		psandbox->activity->c_resource_numbers--;
 		//pr_info("call UNHOLD for psandbox %d\n",current->psandbox->bid);
 		// calculating the defering time
+		if (psandbox->rule.is_retro) {
+			break;
+		}
 		int count = 0;
 		read_lock(&competitors_lock);
 		hash_for_each_possible_safe (competitors_map, cur, tmp, node, key) {
@@ -409,7 +451,7 @@ void do_penalty(PSandbox *victim, ktime_t penalty_ns, unsigned int key, int is_l
 //		pr_info("1.penalty time %u ms, step %d\n",penalty_ns/1000000, current->psandbox->step);
 	} else {
 		if (stat_node->bad_action && stat_node->bad_action > BASE_RATE) {
-			penalty_ns *= stat_node->bad_action / BASE_RATE;
+			penalty_ns *= stat_node->bad_action / BASE_RATE;		
 //			pr_info("2.penalty time %u ms, score %d\n",penalty_ns/1000000, stat_node->bad_action);
 		}
 	}
