@@ -479,10 +479,10 @@ static inline struct request_sock *reqsk_queue_dequeue_fifo_debug(
 		ktime_get_real_ts64(&current_tm);
 		tm = timespec64_sub(current_tm, psandbox->activity->last_queue_in);
 		tm_ns = timespec64_to_ns(&tm);
-		if (psandbox->event_key) {
+		if (psandbox->unbind_flags & UNBIND_HANDLE_ACCEPT &&
+			psandbox->event_key) {
 			do_enter(psandbox, psandbox->event_key);
 		}
-		printk(KERN_INFO "ACCEPT QUEUE psandbox %d: in_queue_time = %lu\n", psandbox->bid, tm_ns);
 	}
 
 	return req;
@@ -518,9 +518,6 @@ static inline struct request_sock *reqsk_queue_dequeue_predict(
 			break;
 
 		count++;
-		// printk(KERN_INFO "------------- Accept it %d psandbox %llu, avg exec time %llu, requeued %d, expected out %llu \n",
-		// 		count, psandbox->task_key, psandbox->average_execution_time, psandbox->requeued,
-		// 		timespec64_to_ns(&psandbox->activity->expected_queue_out));
 
 		ktime_get_real_ts64(&current_tm);
 		current_tm_ns = timespec64_to_ns(&current_tm);
@@ -745,14 +742,14 @@ static inline struct request_sock *reqsk_queue_dequeue_2(
 	#undef BATCH_SIZE
 
 	if (psandbox) {
-		// update event enter
 		ktime_get_real_ts64(&current_tm);
 		tm = timespec64_sub(current_tm, psandbox->activity->last_queue_in);
 		ktime_t tm_ns = timespec64_to_ns(&tm);
-		if (psandbox->event_key) {
+		// update state event enter
+		if (psandbox->unbind_flags & UNBIND_HANDLE_ACCEPT &&
+			psandbox->event_key) {
 			do_enter(psandbox, psandbox->event_key);
 		}
-		printk(KERN_INFO "ACCEPT QUEUE psandbox %d: in_queue_time = %lu\n", psandbox->bid, tm_ns);
 	}
 
 	return req;
@@ -1315,19 +1312,15 @@ struct sock *do_inet_csk_reqsk_queue_add(struct sock *sk,
 	} else {
 
 		size_t addr = child->sk_daddr;
-		// if (addr == 2658904256) {
-		// 	struct timespec64 current_tm;
-		// 	ktime_get_real_ts64(&current_tm);
-		// 	printk(KERN_INFO "+++++ IN QUEUE %llu, %llu", addr, current_tm.tv_sec);
-		// }
-
 		PSandbox *psandbox = NULL;
 		psandbox = get_unbind_psandbox(addr);
 		if (psandbox) {
 			ktime_get_real_ts64(&psandbox->activity->last_queue_in);
-			psandbox->event_key = queue;
-			// prepare before entering the kernel queue
-			do_prepare(psandbox, psandbox->event_key);
+			if (psandbox->unbind_flags & UNBIND_HANDLE_ACCEPT) {
+				// prepare before entering the kernel queue
+				psandbox->event_key = queue;
+				do_prepare(psandbox, psandbox->event_key);
+			}
 		}
 
 		req->sk = child;

@@ -266,8 +266,6 @@ int do_enter(PSandbox *psandbox, unsigned int key) {
 	current_tm = psandbox->activity->defer_time;
 	ktime_t dt = timespec64_to_ns(&current_tm);
 	psandbox->activity->defer_time = timespec64_add(defer_tm, current_tm);
-	printk(KERN_INFO "--ENTER-- psandbox %d: defer time=%lu + %lu = %lu\n",
-		psandbox->bid, dt, timespec64_to_ns(&defer_tm), timespec64_to_ns(&psandbox->activity->defer_time));
 }
 
 
@@ -285,7 +283,7 @@ int do_unhold(PSandbox *psandbox, unsigned int key, unsigned int event_type) {
 		return 0;
 
 	// unhold start
-	int is_lazy = 0;
+	int is_lazy = 0; // not doing lazy
 
 	struct timespec64 current_tm, defer_tm, executing_tm;
 	ktime_t penalty_ns = 0, old_defer = 0, old_execution = 1,
@@ -401,31 +399,22 @@ int do_unhold(PSandbox *psandbox, unsigned int key, unsigned int event_type) {
 	}
 
 	else if (event_type == UNHOLD_IN_QUEUE_PENALTY) {
-		printk(KERN_INFO "- UNHOLD IN QUEUEU PENALTY psandbox %d before penalty time = %llu\n", psandbox->bid, penalty_ns);
 		if (penalty_ns > 10000 && victim) {
 			if (penalty_ns > victim->average_execution_time * LONG_SECTION) {
 				penalty_ns = calculate_starting_penalty_ns(victim,penalty_ns,psandbox,4);
-				/* do_penalty(victim,penalty_ns, key,true); */
 			} else {
 				penalty_ns = calculate_starting_penalty_ns(victim,penalty_ns,psandbox,5);
-				/* do_penalty(victim,penalty_ns, key,false); */
 			}
-			printk(KERN_INFO "-- UNHOLD psandbox %d: penalize it for %llu\b", psandbox->bid, penalty_ns);
 			psandbox->should_penalize_in_queue++;
 			psandbox->in_queue_penalty_time += penalty_ns; // or we call it requeue time to wake up (curr tm + penalty_ns)
 		}
 		//XXX assuming only one user queue unhold event
 		//psandbox->in_queue_victim = victim;
-		printk(KERN_INFO "- UNHOLD IN QUEUEU PENALTY psandbox %d after penalty time = %llu\n", psandbox->bid, penalty_ns);
 		if (victim) {
-		printk(KERN_INFO "- UNHOLD IN QUEUEU PENALTY psandbox %d after 2 penalty time = %llu\n", psandbox->bid, penalty_ns);
 			victim->should_penalize_in_queue = 0;
 			victim->in_queue_penalty_time = 0;
 		}
-
 	}
-
-
 
 }
 
@@ -530,8 +519,8 @@ SYSCALL_DEFINE2(update_event, BoxEvent __user *, event, int, is_lazy) {
 		current_tm = psandbox->activity->defer_time;
 		ktime_t dt = timespec64_to_ns(&current_tm);
 		psandbox->activity->defer_time = timespec64_add(defer_tm, current_tm);
-		printk(KERN_INFO "--ENTER-- psandbox %d: defer time=%lu + %lu = %lu\n",
-			psandbox->bid, dt, timespec64_to_ns(&defer_tm), timespec64_to_ns(&psandbox->activity->defer_time));
+		/* printk(KERN_INFO "--ENTER-- psandbox %d: defer time=%lu + %lu = %lu\n", */
+			/* psandbox->bid, dt, timespec64_to_ns(&defer_tm), timespec64_to_ns(&psandbox->activity->defer_time)); */
 		break;
 	}
 	case UNHOLD:
@@ -840,25 +829,25 @@ SYSCALL_DEFINE2(unbind_psandbox, size_t, addr, int, flags)
 		return -1;
 	}
 
-
-	if (flags & UNBIND_HANDLE_ACCEPT) {
-		printk(KERN_INFO "UNBIND PSANDBOX %d: event_key %lu\n", psandbox->bid, psandbox->event_key);
-		if (psandbox->event_key) {
-			do_unhold(psandbox, psandbox->event_key, UNHOLD_IN_QUEUE_PENALTY);
-		}
+	// XXX We use old unbind flags because UNHOLD is the last state event
+	// to update when finishing and events should start with PREPARE.
+	if (psandbox->unbind_flags & UNBIND_HANDLE_ACCEPT &&
+		psandbox->event_key) {
+		do_unhold(psandbox, psandbox->event_key, UNHOLD_IN_QUEUE_PENALTY);
+		/* printk(KERN_INFO "UNBIND PSANDBOX %d: event_key %lu\n", psandbox->bid, psandbox->event_key); */
 	}
 
-	psandbox->is_lazy = flags & UNBIND_LAZY;
-	// psandbox->is_accept = isAccept;
+	// XXX Here we set the new flags
 	psandbox->unbind_flags = flags;
+	psandbox->is_lazy = flags & UNBIND_LAZY;
 	current->is_psandbox = 0;
-	psandbox->task_key =  addr;
+	psandbox->task_key = addr;
 	ktime_get_real_ts64(&psandbox->activity->last_unbind_start);
 	do_freeze_psandbox(psandbox);
 
-	if (flags & UNBIND_HANDLE_ACCEPT)
-		printk(KERN_INFO "psandbox %d: avg defer=%lu, avg exec=%lu, finished=%d",
-			psandbox->bid, psandbox->average_defer_time, psandbox->average_execution_time, psandbox->finished_activities);
+	/* if (flags & UNBIND_HANDLE_ACCEPT) */
+		/* printk(KERN_INFO "psandbox %d: avg defer=%lu, avg exec=%lu, finished=%d", */
+			/* psandbox->bid, psandbox->average_defer_time, psandbox->average_execution_time, psandbox->finished_activities); */
 
 	if (!psandbox->is_lazy) {
 		do_unbind(0);
@@ -904,7 +893,8 @@ SYSCALL_DEFINE1(bind_psandbox, size_t, addr)
 	current->is_psandbox = 1;
 	psandbox->current_task = current;
 	psandbox->is_lazy = 0;
-	psandbox->unbind_flags = UNBIND_NONE;
+	// XXX Do NOT clear unbind flags here
+	/* psandbox->unbind_flags = UNBIND_NONE; */
 	psandbox->state = BOX_ACTIVE;
 	ktime_get_real_ts64(&psandbox->activity->execution_start);
 

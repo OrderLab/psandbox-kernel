@@ -164,7 +164,6 @@ void clean_unbind_psandbox(struct task_struct *task);
 PSandbox *get_psandbox(int bid);
 // PSandbox *get_psandbox_unbind(u64 addr);
 PSandbox *get_unbind_psandbox(size_t addr);
-// int do_unbind(u64 addr);
 int do_unbind(size_t addr);
 int do_prepare(PSandbox *psandbox, unsigned int key);
 int do_enter(PSandbox *psandbox, unsigned int key);
