@@ -45,6 +45,7 @@ typedef struct sandboxEvent {
 typedef struct isolationRule {
 	enum enum_isolation_type type;
 	int isolation_level; // ratio = isolation_level / 100
+	int is_retro;
 }IsolationRule;
 
 enum enum_psandbox_state {
@@ -107,6 +108,12 @@ typedef struct statistics_node {
 	int step;
 	spinlock_t stat_lock;
 } StatisticNode;
+
+typedef struct demand_node{
+	PSandbox *psandbox;
+	int demand;
+	int is_satisfied;
+}DemandNode;
 
 struct psandbox_info {
 	long int bid;
