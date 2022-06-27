@@ -31,9 +31,10 @@ enum enum_event_type {
 	ENTER,
 	HOLD,
 	UNHOLD,
+	UNHOLD_IN_QUEUE_PENALTY,
 };
 
-enum enum_isolation_type { ABSOLUTE, RELATIVE, SCALABLE, ISOLATION_DEFAULT};
+enum enum_isolation_type { ABSOLUTE, RELATIVE, SCALABLE, ISOLATION_DEFAULT };
 
 enum enum_penalty_type {NORMAL, AVERAGE,TAIL,GOOD, LONG, SHORT};
 typedef struct sandboxEvent {
@@ -77,7 +78,7 @@ typedef struct activity {
 	struct timespec64 execution_time;
 	struct timespec64 last_unbind_start;
 	struct timespec64 unbind_time;
-	struct timespec64 last_queue_in; 
+	struct timespec64 last_queue_in;
 	struct timespec64 expected_queue_out;
 	struct timespec64 requeue_start;
 	int try_number;
@@ -148,6 +149,10 @@ struct psandbox_info {
 	enum enum_unbind_flag unbind_flags;
 	int requeued;
 	u64 addr;
+	int should_penalize_in_queue;
+	ktime_t in_queue_penalty_time;
+	PSandbox *in_queue_victim;
+	unsigned int event_key;
 	int is_nice;
 	// Debug
 	int is_futex;
@@ -166,6 +171,8 @@ void clean_unbind_psandbox(struct task_struct *task);
 PSandbox *get_psandbox(int bid);
 // PSandbox *get_psandbox_unbind(u64 addr);
 PSandbox *get_unbind_psandbox(size_t addr);
-// int do_unbind(u64 addr);
 int do_unbind(size_t addr);
+int do_prepare(PSandbox *psandbox, unsigned int key);
+int do_enter(PSandbox *psandbox, unsigned int key);
+int do_unhold(PSandbox *psandbox, unsigned int key, unsigned int event_type);
 #endif //LINUX_5_4_PSANDBOX_H

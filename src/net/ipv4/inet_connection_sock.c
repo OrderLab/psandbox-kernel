@@ -441,7 +441,7 @@ static inline void __reqsk_queue_add(struct request_sock_queue *queue,
 						struct sock *parent, struct request_sock *req,
 						struct sock *child)
 {
-	spin_lock(&queue->rskq_lock);
+	spin_lock_bh(&queue->rskq_lock);
 
 	req->sk = child;
 	req->dl_next = NULL;
@@ -451,15 +451,311 @@ static inline void __reqsk_queue_add(struct request_sock_queue *queue,
 		queue->rskq_accept_tail->dl_next = req;
 	queue->rskq_accept_tail = req;
 	sk_acceptq_added(parent);
-	
-	spin_unlock(&queue->rskq_lock);
+
+	spin_unlock_bh(&queue->rskq_lock);
 	return;
 }
 
-/*
- * This will accept the next outstanding connection.
- */
-struct sock *inet_csk_accept(struct sock *sk, int flags, int *err, bool kern)
+static inline struct request_sock *reqsk_queue_dequeue_fifo(
+	struct request_sock_queue *queue, struct sock *sk)
+{
+	return reqsk_queue_remove(queue, sk);
+}
+
+static inline struct request_sock *reqsk_queue_dequeue_fifo_debug(
+	struct request_sock_queue *queue, struct sock *sk)
+{
+	struct request_sock *req;
+	size_t addr;
+	PSandbox *psandbox = NULL;
+	struct timespec64 current_tm, tm;
+	ktime_t current_tm_ns, tm_ns;
+
+	req = reqsk_queue_remove(queue, sk);
+	addr = req->sk->sk_daddr;
+	psandbox = get_unbind_psandbox(addr);
+
+	if (psandbox) {
+		ktime_get_real_ts64(&current_tm);
+		tm = timespec64_sub(current_tm, psandbox->activity->last_queue_in);
+		tm_ns = timespec64_to_ns(&tm);
+		if (psandbox->unbind_flags & UNBIND_HANDLE_ACCEPT &&
+			psandbox->event_key) {
+			do_enter(psandbox, psandbox->event_key);
+		}
+	}
+
+	return req;
+}
+
+
+static inline struct request_sock *reqsk_queue_dequeue_predict(
+	struct request_sock_queue *queue, struct sock *sk)
+{
+	struct request_sock *req;
+	struct sock *newsk;
+	struct timespec64 current_tm, queue_tm, tm;
+	ktime_t current_tm_ns, expected_out_tm_ns, add_tm_ns;
+	PSandbox *psandbox;
+	size_t addr;
+	int batch, count = 0;
+
+	#define BATCH_SIZE 512
+	batch = BATCH_SIZE;
+	ktime_t loop_interval = ktime_set(0, 1000000 * 5);
+
+	for (;;) {
+		//pop from from accept queue
+		req = reqsk_queue_remove(queue, sk);
+		newsk = req->sk;
+		addr = newsk->sk_daddr;
+		psandbox = NULL;
+		psandbox = get_unbind_psandbox(addr);
+
+		if (!psandbox)
+			break;
+		if (!(psandbox->unbind_flags & UNBIND_HANDLE_ACCEPT))
+			break;
+
+		count++;
+
+		ktime_get_real_ts64(&current_tm);
+		current_tm_ns = timespec64_to_ns(&current_tm);
+		expected_out_tm_ns = timespec64_to_ns(&psandbox->activity->expected_queue_out);
+		if (expected_out_tm_ns <= current_tm_ns && psandbox->requeued) {
+			ktime_get_real_ts64(&current_tm);
+			tm = timespec64_sub(current_tm, psandbox->activity->last_queue_in);
+			psandbox->last_queue_time = timespec64_to_ns(&tm);
+
+			tm = timespec64_sub(current_tm, psandbox->activity->requeue_start);
+			psandbox->total_defer_time += timespec64_to_ns(&tm);
+			if (psandbox->finished_activities)
+				psandbox->average_defer_time =
+					psandbox->total_defer_time/psandbox->finished_activities;
+			psandbox->requeued = 0;
+			break;
+		}
+
+		if (!psandbox->requeued) {
+			switch(psandbox->rule.type) {
+			case RELATIVE:
+				add_tm_ns =
+					psandbox->average_execution_time / 100 * psandbox->rule.isolation_level;
+				break;
+			case ABSOLUTE:
+			case SCALABLE:
+				printk(KERN_INFO "Fail to handle isolation rule.");
+				break;
+			}
+
+			// if (psandbox->average_execution_time <= 1000000000)
+			// 	break;
+			if (psandbox->average_execution_time <= 10000000)
+				break;
+
+			add_tm_ns = add_tm_ns / 10;
+			if (add_tm_ns >= 1000000 * 100)
+				add_tm_ns = ktime_set(0, 1000000 * 100);
+
+			tm = ns_to_timespec64(add_tm_ns);
+			psandbox->activity->expected_queue_out = timespec64_add(current_tm, tm);
+			ktime_get_real_ts64(&psandbox->activity->requeue_start);
+		}
+
+		// printk(KERN_INFO ">>>>> REQUEUE Accept it %d psandbox %llu, avg exec time %llu, current tm %llu, expected out %llu \n",
+		// 		count, psandbox->task_key, psandbox->average_execution_time,
+		// 		current_tm_ns,
+		// 		timespec64_to_ns(&psandbox->activity->expected_queue_out));
+
+		// mark & add it back to queue
+		psandbox->requeued += 1;
+		__reqsk_queue_add(queue, sk, req, newsk);
+
+		if (!--batch) {
+			batch = BATCH_SIZE;
+			__set_current_state(TASK_INTERRUPTIBLE);
+			schedule_hrtimeout(&loop_interval, HRTIMER_MODE_REL);
+		}
+
+	}
+	#undef BATCH_SIZE
+	return req;
+}
+
+static inline struct request_sock *reqsk_queue_dequeue_detect(
+	struct request_sock_queue *queue, struct sock *sk)
+{
+	struct request_sock *req;
+	struct timespec64 current_tm, max_tm, tm;
+	ktime_t current_tm_ns, queue_tm_ns, tm_ns, min_tm_ns;
+	PSandbox *psandbox = NULL;
+	size_t addr;
+	static int count = 0;
+
+	count = (count + 1) % 2;
+	int loop_count = 0;
+	spin_lock_bh(&queue->rskq_lock);
+	struct request_sock *curr, *prev;
+	struct request_sock *victim, *victim_prev;
+	ktime_get_real_ts64(&current_tm);
+	current_tm_ns = timespec64_to_ns(&current_tm);
+
+	curr = queue->rskq_accept_head;
+	victim = queue->rskq_accept_head;
+	for (; curr; prev = curr, curr = curr->dl_next) {
+
+		addr = curr->sk->sk_daddr;
+		psandbox = get_unbind_psandbox(addr);
+
+		if (!psandbox ||
+			!(psandbox->unbind_flags & UNBIND_HANDLE_ACCEPT)) {
+			if (count) {
+				victim = queue->rskq_accept_head;
+				break;
+			} else continue;
+		}
+
+		tm = timespec64_sub(current_tm, psandbox->activity->last_queue_in);
+		tm_ns = timespec64_to_ns(&tm);
+
+		switch(psandbox->rule.type) {
+		case RELATIVE:
+			queue_tm_ns =
+				(psandbox->average_execution_time / 100 *
+				psandbox->rule.isolation_level) - tm_ns;
+			break;
+		case ABSOLUTE:
+		case SCALABLE:
+			printk(KERN_INFO "Fail to handle isolation rule scalable.");
+			break;
+		}
+
+		if (curr == queue->rskq_accept_head) {
+			min_tm_ns = queue_tm_ns;
+		} else {
+			if (min_tm_ns > queue_tm_ns) {
+				min_tm_ns = queue_tm_ns;
+				victim = curr;
+				victim_prev = prev;
+			}
+		}
+		// printk(KERN_INFO "it %d, curr %x, min %lld, queue %lld", loop_count, curr, min_tm_ns, queue_tm_ns);
+		// prev = curr;
+		loop_count++;
+	}
+	// printk(KERN_INFO "loop len %d, victim %x, victim_prev %x, head %x, tail %x", loop_count,
+	// 	victim, victim_prev, queue->rskq_accept_head, queue->rskq_accept_tail);
+	// remove victim from the queue
+	if (victim == queue->rskq_accept_head) {
+		req = queue->rskq_accept_head;
+		if (req) {
+			sk_acceptq_removed(sk);
+			WRITE_ONCE(queue->rskq_accept_head, req->dl_next);
+			if (queue->rskq_accept_head == NULL)
+				queue->rskq_accept_tail = NULL;
+		}
+	} else if (victim == queue->rskq_accept_tail) {
+		req = queue->rskq_accept_tail;
+		if (req) {
+			sk_acceptq_removed(sk);
+			WRITE_ONCE(victim_prev->dl_next, NULL);
+		}
+	} else {
+		req = victim;
+		if (req) {
+			sk_acceptq_removed(sk);
+			WRITE_ONCE(victim_prev->dl_next, victim->dl_next);
+		}
+	}
+	/* newsk = req->sk; */
+	spin_unlock_bh(&queue->rskq_lock);
+	return req;
+}
+
+static inline struct request_sock *reqsk_queue_dequeue_2(
+	struct request_sock_queue *queue, struct sock *sk)
+{
+	struct request_sock *req;
+	struct sock *newsk;
+	struct timespec64 current_tm, queue_tm, tm;
+	ktime_t current_tm_ns, expected_out_tm_ns, add_tm_ns;
+	PSandbox *psandbox;
+	size_t addr;
+	int batch, count = 0;
+
+	#define BATCH_SIZE 512
+	batch = BATCH_SIZE;
+	ktime_t loop_interval = ktime_set(0, 1000000 * 5);
+
+	for (;;) {
+		// pop from from accept queue
+		req = reqsk_queue_remove(queue, sk);
+		newsk = req->sk;
+		addr = newsk->sk_daddr;
+		psandbox = NULL;
+		psandbox = get_unbind_psandbox(addr);
+
+		if (!psandbox ||
+			!(psandbox->unbind_flags & UNBIND_HANDLE_ACCEPT) ||
+			!psandbox->should_penalize_in_queue) {
+			break;
+		}
+
+		count++;
+
+		ktime_get_real_ts64(&current_tm);
+		current_tm_ns = timespec64_to_ns(&current_tm);
+		expected_out_tm_ns = timespec64_to_ns(&psandbox->activity->expected_queue_out);
+		if (expected_out_tm_ns <= current_tm_ns && psandbox->requeued) {
+			// Update pSandbox info, count in kernel queue time into total defer time
+			ktime_get_real_ts64(&current_tm);
+			tm = timespec64_sub(current_tm, psandbox->activity->last_queue_in);
+			psandbox->last_queue_time = timespec64_to_ns(&tm);
+			tm = timespec64_sub(current_tm, psandbox->activity->requeue_start);
+			psandbox->total_defer_time += timespec64_to_ns(&tm);
+			if (psandbox->finished_activities)
+				psandbox->average_defer_time =
+					psandbox->total_defer_time/psandbox->finished_activities;
+			// clear flags
+			psandbox->requeued = 0;
+			psandbox->should_penalize_in_queue = 0;
+			psandbox->in_queue_penalty_time = 0;
+			psandbox->in_queue_victim = NULL;
+			break;
+		}
+
+		if (!psandbox->requeued) {
+			tm = ns_to_timespec64(psandbox->in_queue_penalty_time);
+			psandbox->activity->expected_queue_out = timespec64_add(current_tm, tm);
+			ktime_get_real_ts64(&psandbox->activity->requeue_start);
+		}
+
+		psandbox->requeued += 1;
+		__reqsk_queue_add(queue, sk, req, newsk);
+
+		if (!--batch) {
+			batch = BATCH_SIZE;
+			__set_current_state(TASK_INTERRUPTIBLE);
+			schedule_hrtimeout(&loop_interval, HRTIMER_MODE_REL);
+		}
+	}
+	#undef BATCH_SIZE
+
+	if (psandbox) {
+		ktime_get_real_ts64(&current_tm);
+		tm = timespec64_sub(current_tm, psandbox->activity->last_queue_in);
+		ktime_t tm_ns = timespec64_to_ns(&tm);
+		// update state event enter
+		if (psandbox->unbind_flags & UNBIND_HANDLE_ACCEPT &&
+			psandbox->event_key) {
+			do_enter(psandbox, psandbox->event_key);
+		}
+	}
+
+	return req;
+}
+
+struct sock *do_inet_csk_accept(struct sock *sk, int flags, int *err, bool kern)
 {
 	struct inet_connection_sock *icsk = inet_csk(sk);
 	struct request_sock_queue *queue = &icsk->icsk_accept_queue;
@@ -489,110 +785,10 @@ struct sock *inet_csk_accept(struct sock *sk, int flags, int *err, bool kern)
 		if (error)
 			goto out_err;
 	}
-	// req = reqsk_queue_remove(queue, sk);
-	// newsk = req->sk;
-
-	// PSandbox change
-	struct timespec64 current_tm, queue_tm, tm;
-	ktime_t current_tm_ns, expected_out_tm_ns, add_tm_ns;
-	PSandbox *psandbox;
-	size_t addr;
-
-	// int count = 0;
-	ktime_t loop_interval = ktime_set(0, 1000000 * 2);
-
-	#define BATCH_SIZE 1024
-	int batch = BATCH_SIZE;
-
-	//TODO optimize
-	// can use cond var and store all requeued psandbox
-	// in a sorted list, and check when to expire in the
-	// timer interrupt call
-	// problems: 1. pointer to psandbox can possibly be freed
-	// when it's in the list; 2. notification order in the
-	// interrupt call might not be the same as the removing 
-	// order from the accept queue
-	for (;;) {
-		//pop from from accept queue
-		req = reqsk_queue_remove(queue, sk);
-		newsk = req->sk;
-
-		addr = newsk->sk_daddr;
-		psandbox = NULL;
-
-		psandbox = get_unbind_psandbox(addr);
-
-		if (!psandbox) 
-			break;
-		if (!(psandbox->unbind_flags & UNBIND_HANDLE_ACCEPT))
-			break;
-		
-		// count++;
-		// printk(KERN_INFO "------------- Accept it %d psandbox %llu, avg exec time %llu, requeued %d, expected out %llu \n", 
-		// 		count, psandbox->task_key, psandbox->average_execution_time, psandbox->requeued, 
-		// 		timespec64_to_ns(&psandbox->activity->expected_queue_out));
-
-		ktime_get_real_ts64(&current_tm);
-		current_tm_ns = timespec64_to_ns(&current_tm);
-		expected_out_tm_ns = timespec64_to_ns(&psandbox->activity->expected_queue_out);
-		if (expected_out_tm_ns <= current_tm_ns && psandbox->requeued) {
-			ktime_get_real_ts64(&current_tm);
-			tm = timespec64_sub(current_tm, psandbox->activity->last_queue_in);
-			psandbox->last_queue_time = timespec64_to_ns(&tm);
-
-			tm = timespec64_sub(current_tm, psandbox->activity->requeue_start);
-			psandbox->total_defer_time += timespec64_to_ns(&tm);
-			if (psandbox->finished_activities)
-				psandbox->average_defer_time = 
-					psandbox->total_defer_time/psandbox->finished_activities;
-			psandbox->requeued = 0;
-			break;
-		}
-
-		if (!psandbox->requeued) {
-			switch(psandbox->rule.type) {
-			case ABSOLUTE:
-				add_tm_ns = psandbox->rule.isolation_level; //XXXassume ns 
-				break;
-			case RELATIVE:
-				add_tm_ns = 
-					psandbox->average_execution_time / 100 * psandbox->rule.isolation_level;
-				break;
-			case SCALABLE:
-				printk(KERN_INFO "Fail to handle isolation rule scalable.");
-				break;
-			}
-
-			if (psandbox->average_execution_time <= 1000000000)
-				break;
-
-			add_tm_ns = add_tm_ns / 10;
-			if (add_tm_ns >= 1000000 * 100)
-				add_tm_ns = ktime_set(0, 1000000 * 100);
-
-			tm = ns_to_timespec64(add_tm_ns);
-			psandbox->activity->expected_queue_out = timespec64_add(current_tm, tm);
-			ktime_get_real_ts64(&psandbox->activity->requeue_start);
-		}
-
-		// printk(KERN_INFO ">>>>> REQUEUE Accept it %d psandbox %llu, avg exec time %llu, current tm %llu, expected out %llu \n", 
-		// 		count, psandbox->task_key, psandbox->average_execution_time, 
-		// 		current_tm_ns,
-		// 		timespec64_to_ns(&psandbox->activity->expected_queue_out));
-
-		// mark & add it back to queue
-		psandbox->requeued += 1;
-		__reqsk_queue_add(queue, sk, req, newsk);
-
-		if (!--batch) {
-			// cond_resched();
-			batch = BATCH_SIZE;
-			__set_current_state(TASK_INTERRUPTIBLE);
-			schedule_hrtimeout(&loop_interval, HRTIMER_MODE_REL);
-		}
-
-	}
-	#undef COND_RESHED_CHECK_BATCH
+    /* req = reqsk_queue_remove(queue, sk); */
+    /* req = reqsk_queue_dequeue_fifo_debug(queue, sk); */
+    req = reqsk_queue_dequeue_2(queue, sk);
+	newsk = req->sk;
 
 	if (sk->sk_protocol == IPPROTO_TCP &&
 	    tcp_rsk(req)->tfo_listener) {
@@ -619,6 +815,14 @@ out_err:
 	req = NULL;
 	*err = error;
 	goto out;
+}
+
+/*
+ * This will accept the next outstanding connection.
+ */
+struct sock *inet_csk_accept(struct sock *sk, int flags, int *err, bool kern)
+{
+	return do_inet_csk_accept(sk, flags, err, kern);
 }
 EXPORT_SYMBOL(inet_csk_accept);
 
@@ -1047,13 +1251,59 @@ static void inet_child_forget(struct sock *sk, struct request_sock *req,
 	inet_csk_destroy_sock(child);
 }
 
-struct sock *inet_csk_reqsk_queue_add(struct sock *sk,
+/* struct sock *__inet_csk_reqsk_queue_add_normal(struct sock *sk, */
+					  /* struct request_sock *req, */
+					  /* struct sock *child) */
+/* { */
+	/* struct request_sock_queue *queue = &inet_csk(sk)->icsk_accept_queue; */
+
+	/* spin_lock(&queue->rskq_lock); */
+	/* if (unlikely(sk->sk_state != TCP_LISTEN)) { */
+		/* inet_child_forget(sk, req, child); */
+		/* child = NULL; */
+	/* } else { */
+		/* req->sk = child; */
+		/* req->dl_next = NULL; */
+		/* if (queue->rskq_accept_head == NULL) */
+			/* WRITE_ONCE(queue->rskq_accept_head, req); */
+		/* else */
+			/* queue->rskq_accept_tail->dl_next = req; */
+		/* queue->rskq_accept_tail = req; */
+		/* sk_acceptq_added(sk); */
+	/* } */
+	/* spin_unlock(&queue->rskq_lock); */
+	/* return child; */
+/* } */
+
+/* struct sock *__inet_csk_reqsk_queue_add_predict(struct sock *sk, */
+/* 				      struct request_sock *req, */
+/* 				      struct sock *child) */
+/* { */
+/* 	struct request_sock_queue *queue = &inet_csk(sk)->icsk_accept_queue; */
+
+/* 	spin_lock(&queue->rskq_lock); */
+/* 	if (unlikely(sk->sk_state != TCP_LISTEN)) { */
+/* 		inet_child_forget(sk, req, child); */
+/* 		child = NULL; */
+/* 	} else { */
+/* 		req->sk = child; */
+/* 		req->dl_next = NULL; */
+/* 		if (queue->rskq_accept_head == NULL) */
+/* 			WRITE_ONCE(queue->rskq_accept_head, req); */
+/* 		else */
+/* 			queue->rskq_accept_tail->dl_next = req; */
+/* 		queue->rskq_accept_tail = req; */
+/* 		sk_acceptq_added(sk); */
+/* 	} */
+/* 	spin_unlock(&queue->rskq_lock); */
+/* 	return child; */
+/* } */
+
+struct sock *do_inet_csk_reqsk_queue_add(struct sock *sk,
 				      struct request_sock *req,
 				      struct sock *child)
 {
 	struct request_sock_queue *queue = &inet_csk(sk)->icsk_accept_queue;
-
-
 
 	spin_lock(&queue->rskq_lock);
 	if (unlikely(sk->sk_state != TCP_LISTEN)) {
@@ -1061,45 +1311,17 @@ struct sock *inet_csk_reqsk_queue_add(struct sock *sk,
 		child = NULL;
 	} else {
 
-		// // PSandbox change
-		// //XXX get psandbox, check for unbind time (last time) 
-		// // if bad, we sleep for a while before add to the queue
-		// // printk(KERN_INFO "!!!! YO LETS FINALLY ADD REQSK TO THE QUEUE \n");
-		// // signed int addr = child->sk_daddr;
-		// size_t addr = child->sk_daddr;
-		// // printk(KERN_INFO "!!!! YO sk_daddr %d\n", child->sk_daddr);
-
-		// size_t addr = child->sk_daddr;
-		// if (addr == 2658904256) {
-		// 	struct timespec64 current_tm;
-		// 	ktime_get_real_ts64(&current_tm);
-		// 	printk(KERN_INFO "+++++ IN QUEUE %llu, %llu", addr, current_tm.tv_sec);
-		// }
-
-
-		// PSandbox *psandbox = NULL;
-		// // printk(KERN_INFO "!!!! YO sk_daddr %d, psandbox=%x\n", child->sk_daddr, get_psandbox_unbind(addr));
-		// psandbox = get_unbind_psandbox(addr);
-		// if (psandbox) {
-		// 	// printk(KERN_INFO "!!!! YO get psandbox unbind %lld \n", psandbox->task_key);
-
-		// 	ktime_get_real_ts64(&psandbox->activity->last_queue_in);
-
-
-		// 	// ktime_t unbind_tm = timespec64_to_ns(&psandbox->activity->unbind_time);
-		// 	//XXX activity gets cleared in do_freaze, add a field in psanbox
-		// 	// only last bind-unbind time or total?
-		// 	// printk(KERN_INFO ">>>>> nsec %llu \n", psandbox->last_queue_time);
-		// 	//XXX 1. do track first, see if I can find the unbind_time...
-		// 	//XXX change ... do penalty, remote
-		// 	// do_penalty(psandbox, psandbox->activity->unbind_time.tv_nsec, addr);
-
-		// } else {
-		// 	// printk(KERN_INFO "!!!! YO DIDN'T get psandbox unbind :( addr= %d  psandbox=%x\n", addr, psandbox);
-		// }
-
-		// // printk(KERN_INFO "!!!! YO rcv_saddr %x\n", inet_csk(sk)->icsk_inet.inet_saddr);
-
+		size_t addr = child->sk_daddr;
+		PSandbox *psandbox = NULL;
+		psandbox = get_unbind_psandbox(addr);
+		if (psandbox) {
+			ktime_get_real_ts64(&psandbox->activity->last_queue_in);
+			if (psandbox->unbind_flags & UNBIND_HANDLE_ACCEPT) {
+				// prepare before entering the kernel queue
+				psandbox->event_key = queue;
+				do_prepare(psandbox, psandbox->event_key);
+			}
+		}
 
 		req->sk = child;
 		req->dl_next = NULL;
@@ -1112,6 +1334,13 @@ struct sock *inet_csk_reqsk_queue_add(struct sock *sk,
 	}
 	spin_unlock(&queue->rskq_lock);
 	return child;
+}
+
+struct sock *inet_csk_reqsk_queue_add(struct sock *sk,
+				      struct request_sock *req,
+				      struct sock *child)
+{
+	return do_inet_csk_reqsk_queue_add(sk, req, child);
 }
 EXPORT_SYMBOL(inet_csk_reqsk_queue_add);
 

@@ -81,7 +81,11 @@ SYSCALL_DEFINE3(create_psandbox, int, type, int, isolation_level, int, priority)
 	psandbox->priority = priority;
 	psandbox->is_nice = 0;
 	psandbox->step = 1;
-        spin_lock_init(&psandbox->lock);
+	psandbox->should_penalize_in_queue = 0;
+	psandbox->in_queue_penalty_time = 0;
+	psandbox->in_queue_victim = NULL;
+	psandbox->event_key = 0;
+	spin_lock_init(&psandbox->lock);
 	INIT_LIST_HEAD(&psandbox->delay_list);
 
 	write_lock(&psandbox_lock);
@@ -91,30 +95,31 @@ SYSCALL_DEFINE3(create_psandbox, int, type, int, isolation_level, int, priority)
 	psandbox_id++;
 	spin_unlock_irqrestore(&stat_lock, flags);
 	psandbox->bid = psandbox_id;
-	
+
 	live_psandbox++;
 
 	pr_info("psandbox syscall called psandbox_create id =%ld by thread %d\n",
 	       psandbox->bid,current->pid);
-	return current->pid;
+	return psandbox->bid;
 }
 
 SYSCALL_DEFINE1(release_psandbox, int, pid)
 {
-	struct task_struct *task = find_get_task_by_vpid(pid);
-	if (!task) {
-		pr_info( "can't find sandbox based on the id\n");
+	PSandbox *psandbox = get_psandbox(pid);
+	struct task_struct *task = psandbox->current_task;
+	if (!psandbox) {
+		printk(KERN_INFO "can't find sandbox based on the id\n");
 		return -1;
 	}
-	if (!task->psandbox) {
-		pr_info( "there is no psandbox in task %d\n", task->pid);
+	if (!task) {
+		printk(KERN_INFO "psandbox has already been released\n");
+
 		return 0;
 	}
-	clean_psandbox(task->psandbox);
+
+	clean_psandbox(psandbox);
 	task->psandbox = NULL;
-	task->is_psandbox=0;
-
-
+	task->is_psandbox = 0;
 	return 0;
 }
 
@@ -219,6 +224,265 @@ SYSCALL_DEFINE0(freeze_psandbox)
 	return 0;
 }
 
+int do_prepare(PSandbox *psandbox, unsigned int key) {
+	/* PSandbox *psandbox; */
+	PSandboxNode *cur;
+	StatisticNode *stat_cur = NULL;
+	struct hlist_node *tmp;
+
+	if (!psandbox) {
+		return -1;
+	}
+	/* psandbox = current->psandbox; */
+	psandbox->count++;
+
+	if(psandbox->is_lazy == 1)
+		return 0;
+
+	// in switch
+	int is_duplicate = false;
+	PSandboxNode* node = NULL;
+	int i;
+
+	psandbox->activity->activity_state = ACTIVITY_WAITING;
+
+	//Add event to the competitor map, update the defer time
+	for (i = 0; i< COMPETITORS_SIZE ; ++i) {
+		if (psandbox->competitors[i].psandbox == NULL) {
+			node = psandbox->competitors + i;
+			break;
+		}
+	}
+	if (!node) {
+		pr_info("create for competitor\n");
+		node = (PSandboxNode *)kzalloc(sizeof(PSandboxNode),GFP_KERNEL);
+	}
+	node->psandbox = psandbox;
+	ktime_get_real_ts64(&node->delaying_start);
+	write_lock(&competitors_lock);
+	hash_add(competitors_map,&node->node, key);
+	write_unlock(&competitors_lock);
+
+
+	read_lock(&stat_map_lock);
+	hash_for_each_possible_safe(stat_map, stat_cur,tmp, node, key) {
+		if (stat_cur->psandbox == psandbox) {
+			is_duplicate = true;
+			break;
+		}
+	}
+	read_unlock(&stat_map_lock);
+	if (!is_duplicate) {
+		StatisticNode *stat_node;
+		stat_node = (StatisticNode *)kzalloc(sizeof(StatisticNode),GFP_KERNEL);
+		stat_node->bad_action = 0;
+		stat_node->psandbox = psandbox;
+		stat_node->step = 1;
+		spin_lock_init(&stat_node->stat_lock);
+		write_lock(&stat_map_lock);
+		hash_add(stat_map,&stat_node->node, key);
+		write_unlock(&stat_map_lock);
+	}
+
+	return 0;
+}
+
+
+int do_enter(PSandbox *psandbox, unsigned int key) {
+	PSandboxNode *cur;
+	StatisticNode *stat_cur = NULL;
+	struct hlist_node *tmp;
+
+	if (!psandbox) {
+		return -1;
+	}
+	psandbox->count++;
+
+	if(psandbox->is_lazy == 1)
+		return 0;
+
+	// enter start
+	struct timespec64 current_tm, defer_tm;
+	struct delaying_start *pos;
+	psandbox->activity->activity_state = ACTIVITY_ENTER;
+	// Free the competitors map
+	defer_tm.tv_sec = -1;
+
+	ktime_get_real_ts64(&current_tm);
+	write_lock(&competitors_lock);
+	hash_for_each_possible_safe (competitors_map, cur, tmp, node, key) {
+		if (cur->psandbox == psandbox) {
+			defer_tm = timespec64_sub(current_tm,cur->delaying_start);
+			hash_del(&cur->node);
+			if (&psandbox->competitors[0] <= cur && cur < &psandbox->competitors[0] + COMPETITORS_SIZE) {
+				cur->psandbox = NULL;
+			} else {
+				kfree(cur);
+			}
+			break;
+		}
+	}
+	write_unlock(&competitors_lock);
+
+	if(defer_tm.tv_sec == -1) {
+		printk (KERN_INFO "can't find the key for delaying start for psandbox %ld\n", psandbox->bid);
+	}
+	psandbox->activity->c_resource_numbers++;
+	current_tm = psandbox->activity->defer_time;
+	ktime_t dt = timespec64_to_ns(&current_tm);
+	psandbox->activity->defer_time = timespec64_add(defer_tm, current_tm);
+}
+
+
+int do_unhold(PSandbox *psandbox, unsigned int key, unsigned int event_type) {
+	PSandboxNode *cur;
+	StatisticNode *stat_cur = NULL;
+	struct hlist_node *tmp;
+
+	if (!psandbox) {
+		return -1;
+	}
+	psandbox->count++;
+
+	if(psandbox->is_lazy == 1)
+		return 0;
+
+	// unhold start
+	int is_lazy = 0; // not doing lazy
+
+	struct timespec64 current_tm, defer_tm, executing_tm;
+	ktime_t penalty_ns = 0, old_defer = 0, old_execution = 1,
+		current_defer, current_execution;
+	PSandbox *victim = NULL;
+	psandbox->unhold++;
+	psandbox->activity->activity_state = ACTIVITY_EXIT;
+	psandbox->activity->c_resource_numbers--;
+		  //pr_info("call UNHOLD for psandbox %d\n",current->psandbox->bid);
+		  // calculating the defering time
+
+	/* printk(KERN_INFO "0. psandbox=%d unhold, avg defer time %lu", psandbox->bid); */
+
+	int count = 0;
+	read_lock(&competitors_lock);
+	hash_for_each_possible_safe (competitors_map, cur, tmp, node, key) {
+		int is_noisy = false;
+		if (psandbox->action_level != LOW_PRIORITY)
+			continue;
+
+		defer_tm.tv_sec = -1;
+		if (cur->psandbox->bid != psandbox->bid) {
+			count++;
+			/* printk(KERN_INFO "1. psandbox=%d looping through competitors_map %d, avg_defer_tm=%lu, threshold=%lu", psandbox->bid, count, */
+			/* 	cur->psandbox->average_defer_time * 1000,  9 * cur->psandbox->average_execution_time * cur->psandbox->rule.isolation_level); */
+
+			switch (cur->psandbox->rule.type) {
+			case RELATIVE:
+				if (cur->psandbox->average_defer_time * 1000 < 9 * cur->psandbox->average_execution_time * cur->psandbox->rule.isolation_level) {
+					/* printk(KERN_INFO "2. psandbox=%d skip! looping through competitors_map %d", psandbox->bid, count); */
+					continue;
+				}
+//						pr_info("after call continues %ld, defer time %llu, execution time %llu\n", cur->psandbox->bid,cur->psandbox->average_defer_time, cur->psandbox->average_execution_time);
+				break;
+			case SCALABLE:
+				if (cur->psandbox->average_defer_time * 1000  < 9 * cur->psandbox->average_execution_time * cur->psandbox->rule.isolation_level * live_psandbox) {
+					continue;
+				}
+//						pr_info("after call continues %ld, defer time %llu, execution time %llu\n", cur->psandbox->bid,cur->psandbox->average_defer_time, cur->psandbox->average_execution_time);
+				break;
+			default: break;
+			}
+
+			/* printk(KERN_INFO "psandbox=%d 3 calculating defer time! looping through competitors_map %d", psandbox->bid, count); */
+			ktime_get_real_ts64(&current_tm);
+			defer_tm = timespec64_sub(current_tm,cur->delaying_start);
+			defer_tm = timespec64_sub(defer_tm,cur->psandbox->activity->defer_time);
+
+			if (defer_tm.tv_sec == -1) {
+			//	pr_info("2. can't find the key for delaying start for psandbox %ld\n", psandbox->bid);
+			}
+			executing_tm = timespec64_sub(timespec64_sub(current_tm, cur->psandbox->activity->execution_start), defer_tm);
+//				pr_info ("current time %lu, executing start %lu ns, the executing time is %lu ns, the defer time is %lu ns for psandbox %d, current psandbox %d\n",timespec64_to_ns(&current_tm),timespec64_to_ns(&cur->psandbox->activity->execution_start),timespec64_to_ns(&executing_tm),timespec64_to_ns(&defer_tm), cur->psandbox->bid, psandbox->bid);
+			current_defer = timespec64_to_ns(&defer_tm);
+			current_execution = timespec64_to_ns(&executing_tm);
+			switch (cur->psandbox->rule.type) {
+				case RELATIVE:
+					if (current_defer * 100 > current_execution * cur->psandbox->rule.isolation_level) {
+						is_noisy = true;
+					}
+					break;
+				case SCALABLE:
+					if (current_defer * 100 >current_execution * cur->psandbox->rule.isolation_level * live_psandbox) {
+						is_noisy = true;
+					}
+					break;
+				default: break;
+			}
+
+			if (is_noisy) {
+//					 printk (KERN_INFO "the defer time is %ld for psandbox %ld\n",timespec64_to_ns(&defer_tm),cur->psandbox->bid);
+				// Find the psandbox that is interferenced most
+				if (current_defer * old_execution > old_defer * current_execution) {
+					old_defer = current_defer;
+					old_execution = current_execution;
+					penalty_ns = current_defer;
+					victim = cur->psandbox;
+				}
+			}
+		}
+	}
+	if (count == 0) {
+		psandbox->competitor++;
+	}
+	read_unlock(&competitors_lock);
+
+	if (event_type == UNHOLD) {
+		if (is_lazy) {
+			if (penalty_ns > 10000 && victim) {
+				psandbox->activity->victim_id = victim->current_task->pid;
+				psandbox->activity->key = key;
+				psandbox->activity->penalty_ns = penalty_ns;
+//				pr_info("call do update %d, victim id %d, key %lu \n",psandbox->bid,psandbox->activity->victim_id,psandbox->activity->key);
+				return penalty_ns;
+			} else {
+//				pr_info("the penalty is %lu\n",penalty_ns);
+				return 0;
+			}
+		}
+
+		if (penalty_ns > 10000 && victim) {
+			if (penalty_ns > victim->average_execution_time * LONG_SECTION) {
+				penalty_ns = calculate_starting_penalty_ns(victim,penalty_ns,psandbox,4);
+				do_penalty(victim,penalty_ns, key,true);
+			} else { // FIXME victim could be NULL pointer?
+				penalty_ns = calculate_starting_penalty_ns(victim,penalty_ns,psandbox,5);
+				do_penalty(victim,penalty_ns, key,false);
+			}
+
+		} else if (penalty_ns != 0){
+			pr_info("3. skip event: sleep psandbox %d, thread %d, defer time %llu\n", current->psandbox->bid, current->pid, penalty_ns);
+		}
+	}
+
+	else if (event_type == UNHOLD_IN_QUEUE_PENALTY) {
+		if (penalty_ns > 10000 && victim) {
+			if (penalty_ns > victim->average_execution_time * LONG_SECTION) {
+				penalty_ns = calculate_starting_penalty_ns(victim,penalty_ns,psandbox,4);
+			} else {
+				penalty_ns = calculate_starting_penalty_ns(victim,penalty_ns,psandbox,5);
+			}
+			psandbox->should_penalize_in_queue++;
+			psandbox->in_queue_penalty_time += penalty_ns; // or we call it requeue time to wake up (curr tm + penalty_ns)
+		}
+		//XXX assuming only one user queue unhold event
+		//psandbox->in_queue_victim = victim;
+		if (victim) {
+			victim->should_penalize_in_queue = 0;
+			victim->in_queue_penalty_time = 0;
+		}
+	}
+
+}
+
 SYSCALL_DEFINE2(update_event, BoxEvent __user *, event, int, is_lazy) {
 	BoxEvent boxevent;
 	unsigned int event_type, key;
@@ -244,7 +508,7 @@ SYSCALL_DEFINE2(update_event, BoxEvent __user *, event, int, is_lazy) {
 
 
 	switch (event_type) {
-	case PREPARE:{
+	case PREPARE: {
 		int is_duplicate = false;
 		PSandboxNode* node = NULL;
 		int i;
@@ -266,12 +530,12 @@ SYSCALL_DEFINE2(update_event, BoxEvent __user *, event, int, is_lazy) {
 		node->psandbox = psandbox;
 		ktime_get_real_ts64(&node->delaying_start);
 		write_lock(&competitors_lock);
-		hash_add(competitors_map,&node->node,key);
+		hash_add(competitors_map,&node->node, key);
 		write_unlock(&competitors_lock);
 
 
 		read_lock(&stat_map_lock);
-		hash_for_each_possible_safe(stat_map, stat_cur,tmp, node,key) {
+		hash_for_each_possible_safe(stat_map, stat_cur,tmp, node, key) {
 			if (stat_cur->psandbox == psandbox) {
 				is_duplicate = true;
 				break;
@@ -286,7 +550,7 @@ SYSCALL_DEFINE2(update_event, BoxEvent __user *, event, int, is_lazy) {
 			stat_node->step = 1;
 			spin_lock_init(&stat_node->stat_lock);
 			write_lock(&stat_map_lock);
-			hash_add(stat_map,&stat_node->node,key);
+			hash_add(stat_map,&stat_node->node, key);
 			write_unlock(&stat_map_lock);
 		}
 		break;
@@ -305,7 +569,7 @@ SYSCALL_DEFINE2(update_event, BoxEvent __user *, event, int, is_lazy) {
 				hash_del(&cur->node);
 				if (&psandbox->competitors[0] <= cur && cur < &psandbox->competitors[0] + COMPETITORS_SIZE) {
 					cur->psandbox = NULL;
-				}  else {
+				} else {
 					kfree(cur);
 				}
 				break;
@@ -318,10 +582,14 @@ SYSCALL_DEFINE2(update_event, BoxEvent __user *, event, int, is_lazy) {
 		}
 		psandbox->activity->c_resource_numbers++;
 		current_tm = psandbox->activity->defer_time;
+		ktime_t dt = timespec64_to_ns(&current_tm);
 		psandbox->activity->defer_time = timespec64_add(defer_tm, current_tm);
+		/* printk(KERN_INFO "--ENTER-- psandbox %d: defer time=%lu + %lu = %lu\n", */
+			/* psandbox->bid, dt, timespec64_to_ns(&defer_tm), timespec64_to_ns(&psandbox->activity->defer_time)); */
 		break;
 	}
-	case UNHOLD: {
+	case UNHOLD:
+	case UNHOLD_IN_QUEUE_PENALTY: {
 		struct timespec64 current_tm, defer_tm, executing_tm;
 		ktime_t penalty_ns = 0, old_defer = 0, old_execution = 1,
 			current_defer, current_execution;
@@ -330,38 +598,38 @@ SYSCALL_DEFINE2(update_event, BoxEvent __user *, event, int, is_lazy) {
 		psandbox->unhold++;
 		psandbox->activity->activity_state = ACTIVITY_EXIT;
 		psandbox->activity->c_resource_numbers--;
-		//pr_info("call UNHOLD for psandbox %d\n",current->psandbox->bid);
-		// calculating the defering time
-		if (psandbox->rule.is_retro) {
-			break;
-		}
+		int count = 0;
 
 		read_lock(&competitors_lock);
 		hash_for_each_possible_safe (competitors_map, cur, tmp, node, key) {
 			int is_noisy = false;
-
 			if (psandbox->action_level != LOW_PRIORITY)
 				continue;
 
 			defer_tm.tv_sec = -1;
 			if (cur->psandbox->bid != psandbox->bid) {
 				count++;
+				/* printk(KERN_INFO "1. psandbox=%d looping through competitors_map %d, avg_defer_tm=%lu, threshold=%lu", psandbox->bid, count, */
+				/* 	cur->psandbox->average_defer_time * 1000,  9 * cur->psandbox->average_execution_time * cur->psandbox->rule.isolation_level); */
+
 				switch (cur->psandbox->rule.type) {
-					case RELATIVE:
-						if (cur->psandbox->average_defer_time * 1000 < 9 * cur->psandbox->average_execution_time * cur->psandbox->rule.isolation_level  ) {
-							continue;
-						}
+				case RELATIVE:
+					if (cur->psandbox->average_defer_time * 1000 < 9 * cur->psandbox->average_execution_time * cur->psandbox->rule.isolation_level) {
+						/* printk(KERN_INFO "2. psandbox=%d skip! looping through competitors_map %d", psandbox->bid, count); */
+						continue;
+					}
 //						pr_info("after call continues %ld, defer time %llu, execution time %llu\n", cur->psandbox->bid,cur->psandbox->average_defer_time, cur->psandbox->average_execution_time);
-						break;
-					case SCALABLE:
-						if (cur->psandbox->average_defer_time * 1000  < 9 * cur->psandbox->average_execution_time * cur->psandbox->rule.isolation_level * live_psandbox) {
-							continue;
-						}
+					break;
+				case SCALABLE:
+					if (cur->psandbox->average_defer_time * 1000  < 9 * cur->psandbox->average_execution_time * cur->psandbox->rule.isolation_level * live_psandbox) {
+						continue;
+					}
 //						pr_info("after call continues %ld, defer time %llu, execution time %llu\n", cur->psandbox->bid,cur->psandbox->average_defer_time, cur->psandbox->average_execution_time);
-						break;
-					default: break;
+					break;
+				default: break;
 				}
 
+				/* printk(KERN_INFO "psandbox=%d 3 calculating defer time! looping through competitors_map %d", psandbox->bid, count); */
 				ktime_get_real_ts64(&current_tm);
 				defer_tm = timespec64_sub(current_tm,cur->delaying_start);
 				defer_tm = timespec64_sub(defer_tm,cur->psandbox->activity->defer_time);
@@ -404,37 +672,57 @@ SYSCALL_DEFINE2(update_event, BoxEvent __user *, event, int, is_lazy) {
 		}
 		read_unlock(&competitors_lock);
 
-		if (is_lazy) {
+		if (event_type == UNHOLD) {
+			if (is_lazy) {
+				if (penalty_ns > 10000 && victim) {
+					psandbox->activity->victim_id = victim->current_task->pid;
+					psandbox->activity->key = key;
+					psandbox->activity->penalty_ns = penalty_ns;
+	//				pr_info("call do update %d, victim id %d, key %lu \n",psandbox->bid,psandbox->activity->victim_id,psandbox->activity->key);
+					return penalty_ns;
+				} else {
+	//				pr_info("the penalty is %lu\n",penalty_ns);
+					return 0;
+				}
+			}
+
 			if (penalty_ns > 10000 && victim) {
-				psandbox->activity->victim_id = victim->current_task->pid;
-				psandbox->activity->key = key;
-				psandbox->activity->penalty_ns = penalty_ns;
-//				pr_info("call do update %d, victim id %d, key %lu \n",psandbox->bid,psandbox->activity->victim_id,psandbox->activity->key);
-				return penalty_ns;
-			} else {
-//				pr_info("the penalty is %lu\n",penalty_ns);
-				return 0;
+				if (penalty_ns > victim->average_execution_time * LONG_SECTION) {
+					penalty_ns = calculate_starting_penalty_ns(victim,penalty_ns,psandbox,4);
+					do_penalty(victim,penalty_ns, key,true);
+				} else { // FIXME victim could be NULL pointer?
+					penalty_ns = calculate_starting_penalty_ns(victim,penalty_ns,psandbox,5);
+					do_penalty(victim,penalty_ns, key,false);
+				}
+
+			} else if (penalty_ns != 0){
+				pr_info("3. skip event: sleep psandbox %d, thread %d, defer time %llu\n", current->psandbox->bid, current->pid, penalty_ns);
 			}
-
-		}
-
-		if (penalty_ns > 10000 && victim) {
-			if (penalty_ns > victim->average_execution_time * LONG_SECTION) {
-				penalty_ns = calculate_starting_penalty_ns(victim,penalty_ns,psandbox,2);
-				do_penalty(victim,penalty_ns, key,true);
-			} else {
-				penalty_ns = calculate_starting_penalty_ns(victim,penalty_ns,psandbox,2);
-				do_penalty(victim,penalty_ns, key,false);
+		}	else if (event_type == UNHOLD_IN_QUEUE_PENALTY) {
+			/* printk(KERN_INFO "UNHOLD IN QUEUEU PENALTY: before penalize psandbox %d for %llu\n", psandbox->bid, penalty_ns); */
+			if (penalty_ns > 10000 && victim) {
+				if (penalty_ns > victim->average_execution_time * LONG_SECTION) {
+					penalty_ns = calculate_starting_penalty_ns(victim,penalty_ns,psandbox,4);
+					/* do_penalty(victim,penalty_ns, key,true); */
+				} else {
+					penalty_ns = calculate_starting_penalty_ns(victim,penalty_ns,psandbox,5);
+					/* do_penalty(victim,penalty_ns, key,false); */
+				}
+				/* printk(KERN_INFO "penalize psandbox %d for %llu\b", psandbox->bid, penalty_ns); */
+				psandbox->should_penalize_in_queue++;
+				psandbox->in_queue_penalty_time += penalty_ns; // or we call it requeue time to wake up (curr tm + penalty_ns)
 			}
-
-		} else if (penalty_ns != 0){
-			pr_info("3. skip event: sleep psandbox %ld, thread %d, defer time %llu\n", current->psandbox->bid, current->pid, penalty_ns);
+			//XXX assuming only one user queue unhold event
+			//psandbox->in_queue_victim = victim;
+			if (victim) {
+				victim->should_penalize_in_queue = 0;
+				victim->in_queue_penalty_time = 0;
+			}
 		}
 		break;
 	}
 	default:break;
 	}
-
 	return 0;
 }
 
@@ -538,23 +826,23 @@ void do_penalty(PSandbox *victim, ktime_t penalty_ns, unsigned int key, int is_l
 			spin_unlock(&stat_node->stat_lock);
 		}
 		break;
-		case SCALABLE:
-			if (victim->average_defer_time * 100 > victim->average_defer_time * victim->rule.isolation_level * live_psandbox) {
+	case SCALABLE:
+		if (victim->average_defer_time * 100 > victim->average_defer_time * victim->rule.isolation_level * live_psandbox) {
 				spin_lock(&stat_node->stat_lock);
 				stat_node->bad_action++;
 				spin_unlock(&stat_node->stat_lock);
-			} else if (new_slack < old_slack) {
+		} else if (new_slack < old_slack) {
 				spin_lock(&stat_node->stat_lock);
 				stat_node->bad_action++;
 				spin_unlock(&stat_node->stat_lock);
-			} else if (stat_node->bad_action > 1) {
+		} else if (stat_node->bad_action > 1) {
 				spin_lock(&stat_node->stat_lock);
 				stat_node->bad_action--;
 				spin_unlock(&stat_node->stat_lock);
-			}
-			break;
-			default:
-				break;
+		}
+		break;
+	default:
+		break;
 	}
 }
 
@@ -570,27 +858,12 @@ SYSCALL_DEFINE0(get_current_psandbox)
 SYSCALL_DEFINE1(get_psandbox, size_t, addr)
 {
 	PSandbox *psandbox = NULL;
-	// PSandboxNode *cur;
-	// struct hlist_node *tmp;
-	// read_lock(&transfers_lock);
-	// hash_for_each_possible_safe (transfers_map, cur, tmp, node, addr) {
-	// 	if (cur->psandbox->task_key == addr) {
-	// 		psandbox = cur->psandbox;
-	// 		break;
-	// 	}
-	// }
-	// read_unlock(&transfers_lock);
-
 	psandbox = get_unbind_psandbox(addr);
 
 	if (!psandbox) {
 		// pr_info("can't find psandbox for addr %llu\n", addr);
 		return -1;
 	}
-
-	//XXX psandbox->current_task is a NULL ptr for sure, 
-	// so let's just use bid instead, 
-	// ... or return 0 which both can be confusing considering the naming
 	return psandbox->bid;
 }
 
@@ -603,7 +876,6 @@ SYSCALL_DEFINE2(annotate_resource, u32 __user *, uaddr, int, action_type) {
 	return 0;
 }
 
-//SYSCALL_DEFINE3(unbind_psandbox, size_t, addr, bool, isLazy, bool, isAccept)
 SYSCALL_DEFINE2(unbind_psandbox, size_t, addr, int, flags)
 {
 	PSandbox *psandbox = current->psandbox;
@@ -613,20 +885,33 @@ SYSCALL_DEFINE2(unbind_psandbox, size_t, addr, int, flags)
 		pr_info("can't find psandbox to unbind\n");
 		return -1;
 	}
-	psandbox->is_lazy = flags & UNBIND_LAZY;
-	// psandbox->is_accept = isAccept;
-	psandbox->unbind_flags = flags;
-	current->is_psandbox = 0;
-	psandbox->task_key =  addr;
-	ktime_get_real_ts64(&psandbox->activity->last_unbind_start);
-	do_freeze_psandbox(psandbox);
-	// pr_info("lazy unbind psandbox %d to addr %d\n", psandbox->bid,addr);
-	if (!psandbox->is_lazy) {
-		// pr_info("task %d: !!! do unbind for addr %llu\n", current->pid, addr);
-		do_unbind(0);
+
+	// XXX We use old unbind flags because UNHOLD is the last state event
+	// to update when finishing and events should start with PREPARE.
+	if (psandbox->unbind_flags & UNBIND_HANDLE_ACCEPT &&
+		psandbox->event_key) {
+		do_unhold(psandbox, psandbox->event_key, UNHOLD_IN_QUEUE_PENALTY);
+		/* printk(KERN_INFO "UNBIND PSANDBOX %d: event_key %lu\n", psandbox->bid, psandbox->event_key); */
 	}
 
-	return pid;
+	// XXX Here we set the new flags
+	psandbox->unbind_flags = flags;
+	psandbox->is_lazy = flags & UNBIND_LAZY;
+	current->is_psandbox = 0;
+	psandbox->task_key = addr;
+	ktime_get_real_ts64(&psandbox->activity->last_unbind_start);
+	do_freeze_psandbox(psandbox);
+
+	/* if (flags & UNBIND_HANDLE_ACCEPT) */
+		/* printk(KERN_INFO "psandbox %d: avg defer=%lu, avg exec=%lu, finished=%d", */
+			/* psandbox->bid, psandbox->average_defer_time, psandbox->average_execution_time, psandbox->finished_activities); */
+
+	if (!psandbox->is_lazy) {
+		do_unbind(0);
+		//printk(KERN_INFO "task %d: !!! do unbind psandbox %d for addr %llu, is_psandbox %d\n", current->pid, pid, addr, current->is_psandbox);
+	}
+
+	return psandbox->bid;
 }
 
 SYSCALL_DEFINE1(bind_psandbox, size_t, addr)
@@ -654,7 +939,6 @@ SYSCALL_DEFINE1(bind_psandbox, size_t, addr)
 			}
 		}
 	}
-
 	write_unlock(&transfers_lock);
 
 	if (!psandbox) {
@@ -666,7 +950,8 @@ SYSCALL_DEFINE1(bind_psandbox, size_t, addr)
 	current->is_psandbox = 1;
 	psandbox->current_task = current;
 	psandbox->is_lazy = 0;
-	psandbox->unbind_flags = UNBIND_NONE;
+	// XXX Do NOT clear unbind flags here
+	/* psandbox->unbind_flags = UNBIND_NONE; */
 	psandbox->state = BOX_ACTIVE;
 	ktime_get_real_ts64(&psandbox->activity->execution_start);
 
@@ -684,8 +969,10 @@ SYSCALL_DEFINE1(bind_psandbox, size_t, addr)
 	// pr_info("current sec %llu \n", current_tm.tv_sec);
 	// pr_info("last time start sec %llu \n", psandbox->activity->last_unbind_start.tv_sec);
 	// pr_info("task %d: !!! bind psandbox for addr %llu\n", current->pid, addr);
+	// pr_info("task %d: +++ do bind psandbox %d for addr %llu\n", current->pid, psandbox->bid, addr);
 
-	return psandbox->current_task->pid;
+
+	return psandbox->bid;
 }
 
 int do_unbind(size_t addr){
@@ -706,7 +993,7 @@ int do_unbind(size_t addr){
 		return current->pid;
 	}
 
-	for (i = 0; i<PREALLOCATION_SIZE ; ++i) {
+	for (i = 0; i < PREALLOCATION_SIZE; ++i) {
 		if (psandbox->transfers[i].psandbox == NULL) {
 			a = psandbox->transfers + i;
 			break;
@@ -726,7 +1013,6 @@ int do_unbind(size_t addr){
 	hash_add(transfers_map,&a->node,psandbox->task_key);
 	write_unlock(&transfers_lock);
 
-//	pr_info("do unbind the psandbox %d to addr %d\n",psandbox->bid,addr);
 	return 0;
 }
 
@@ -759,11 +1045,14 @@ void do_freeze_psandbox(PSandbox *psandbox){
 
 	defer_tm = timespec64_to_ns(&psandbox->activity->defer_time);
 	psandbox->total_defer_time += defer_tm;
-	if (psandbox->finished_activities) {
-		psandbox->average_defer_time = psandbox->total_defer_time/psandbox->finished_activities;
-		psandbox->average_execution_time = psandbox->total_execution_time/psandbox->finished_activities;
+	if (!(psandbox->unbind_flags & UNBIND_ACT_UNFINISHED)) {
+		if (psandbox->finished_activities) {
+			psandbox->average_defer_time = psandbox->total_defer_time/psandbox->finished_activities;
+			psandbox->average_execution_time = psandbox->total_execution_time/psandbox->finished_activities;
+		}
 	}
 
+        // XXX when the activity is unfinished, bad_activities may increase for multiple times
 	if (timespec64_to_ns(&psandbox->activity->execution_time) * psandbox->rule.isolation_level  < timespec64_to_ns(&psandbox->activity->defer_time) * 100 ) {
 		psandbox->bad_activities++;
 	}
@@ -873,42 +1162,29 @@ void clean_unbind_psandbox(struct task_struct *task) {
 
 PSandbox *get_psandbox(int bid) {
 	PSandbox *pos = NULL;
-
 	read_lock(&psandbox_lock);
 	list_for_each_entry(pos,&psandbox_list,list) {
 		if (pos->bid == bid) {
 			read_unlock(&psandbox_lock);
 			return pos;
 		}
-
 	}
-
 	read_unlock(&psandbox_lock);
 	return pos;
 }
 
-//XXX use long signed int for addr
-// change to get_unbind_psandbox
 PSandbox *get_unbind_psandbox(size_t addr) {
 	PSandbox *psandbox = NULL;
 	PSandboxNode *cur;
 	struct hlist_node *tmp;
 	read_lock(&transfers_lock);
-	// pr_info( "!!!! Start get_pandbox_unbind  %ld\n", addr);
 	hash_for_each_possible_safe (transfers_map, cur, tmp, node, addr) {
-	// int bkt;
-	// hash_for_each_safe (transfers_map, bkt, tmp, cur, node) {
-		//XXX printf size see what's up
-		// printk(KERN_INFO "!!!! Iterating get_pandbox_unbind  %ld, %ld\n", addr, cur->psandbox->task_key);
 		if (cur->psandbox->task_key == addr) {
 			psandbox = cur->psandbox;
-			// printk(KERN_INFO "!!!! Iterating get_pandbox_unbind 222  %ld, %ld, p=%x\n", addr, cur->psandbox->task_key, psandbox);
 			break;
 		}
 	}
-	// printk(KERN_INFO "!!!! End get_pandbox_unbind  %ld p=%x\n", addr, psandbox);
 	read_unlock(&transfers_lock);
-	// printk(KERN_INFO "!!!! End get_pandbox_unbind <3 %ld p=%x\n", addr, psandbox);
 	return psandbox;
 }
 
