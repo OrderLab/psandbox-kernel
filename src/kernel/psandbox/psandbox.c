@@ -598,7 +598,6 @@ SYSCALL_DEFINE2(update_event, BoxEvent __user *, event, int, is_lazy) {
 		psandbox->unhold++;
 		psandbox->activity->activity_state = ACTIVITY_EXIT;
 		psandbox->activity->c_resource_numbers--;
-		int count = 0;
 
 		read_lock(&competitors_lock);
 		hash_for_each_possible_safe (competitors_map, cur, tmp, node, key) {
