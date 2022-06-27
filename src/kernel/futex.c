@@ -1653,13 +1653,13 @@ futex_wake(u32 __user *uaddr, unsigned int flags, int nr_wake, u32 bitset)
 								current_defer = timespec64_to_ns(&defer_tm);
 								current_execution = timespec64_to_ns(&executing_tm);
 								switch (v_psandbox->rule.type) {
-								case RELATIVE:
+								case ISOLATION_RELATIVE:
 									if (current_defer * 100 > current_execution * v_psandbox->rule.isolation_level) {
 										is_noisy = true;
 										penalty_ns = current_defer;
 									}
 									break;
-								case SCALABLE:
+								case ISOLATION_SCALABLE:
 									if (current_defer * 100 >current_execution * v_psandbox->rule.isolation_level * live_psandbox) {
 										is_noisy = true;
 										penalty_ns = current_defer;

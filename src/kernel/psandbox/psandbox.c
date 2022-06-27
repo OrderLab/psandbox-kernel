@@ -64,7 +64,7 @@ SYSCALL_DEFINE3(create_psandbox, int, type, int, isolation_level, int, priority)
 	current->is_psandbox = 1;
 	current->is_creator = 1;
 	psandbox->finished_activities = 0;
-	psandbox->action_level = LOW_PRIORITY;
+	psandbox->action_level = PSB_LOW_PRIORITY;
 	psandbox->is_white = 0;
 	psandbox->is_futex =0;
 	psandbox->bad_activities = 0;
@@ -366,7 +366,7 @@ int do_unhold(PSandbox *psandbox, unsigned int key, unsigned int event_type) {
 	read_lock(&competitors_lock);
 	hash_for_each_possible_safe (competitors_map, cur, tmp, node, key) {
 		int is_noisy = false;
-		if (psandbox->action_level != LOW_PRIORITY)
+		if (psandbox->action_level != PSB_LOW_PRIORITY)
 			continue;
 
 		defer_tm.tv_sec = -1;
@@ -376,14 +376,14 @@ int do_unhold(PSandbox *psandbox, unsigned int key, unsigned int event_type) {
 			/* 	cur->psandbox->average_defer_time * 1000,  9 * cur->psandbox->average_execution_time * cur->psandbox->rule.isolation_level); */
 
 			switch (cur->psandbox->rule.type) {
-			case RELATIVE:
+			case ISOLATION_RELATIVE:
 				if (cur->psandbox->average_defer_time * 1000 < 9 * cur->psandbox->average_execution_time * cur->psandbox->rule.isolation_level) {
 					/* printk(KERN_INFO "2. psandbox=%d skip! looping through competitors_map %d", psandbox->bid, count); */
 					continue;
 				}
 //						pr_info("after call continues %ld, defer time %llu, execution time %llu\n", cur->psandbox->bid,cur->psandbox->average_defer_time, cur->psandbox->average_execution_time);
 				break;
-			case SCALABLE:
+			case ISOLATION_SCALABLE:
 				if (cur->psandbox->average_defer_time * 1000  < 9 * cur->psandbox->average_execution_time * cur->psandbox->rule.isolation_level * live_psandbox) {
 					continue;
 				}
@@ -405,12 +405,12 @@ int do_unhold(PSandbox *psandbox, unsigned int key, unsigned int event_type) {
 			current_defer = timespec64_to_ns(&defer_tm);
 			current_execution = timespec64_to_ns(&executing_tm);
 			switch (cur->psandbox->rule.type) {
-				case RELATIVE:
+				case ISOLATION_RELATIVE:
 					if (current_defer * 100 > current_execution * cur->psandbox->rule.isolation_level) {
 						is_noisy = true;
 					}
 					break;
-				case SCALABLE:
+				case ISOLATION_SCALABLE:
 					if (current_defer * 100 >current_execution * cur->psandbox->rule.isolation_level * live_psandbox) {
 						is_noisy = true;
 					}
@@ -602,7 +602,7 @@ SYSCALL_DEFINE2(update_event, BoxEvent __user *, event, int, is_lazy) {
 		read_lock(&competitors_lock);
 		hash_for_each_possible_safe (competitors_map, cur, tmp, node, key) {
 			int is_noisy = false;
-			if (psandbox->action_level != LOW_PRIORITY)
+			if (psandbox->action_level != PSB_LOW_PRIORITY)
 				continue;
 
 			defer_tm.tv_sec = -1;
@@ -612,14 +612,14 @@ SYSCALL_DEFINE2(update_event, BoxEvent __user *, event, int, is_lazy) {
 				/* 	cur->psandbox->average_defer_time * 1000,  9 * cur->psandbox->average_execution_time * cur->psandbox->rule.isolation_level); */
 
 				switch (cur->psandbox->rule.type) {
-				case RELATIVE:
+				case ISOLATION_RELATIVE:
 					if (cur->psandbox->average_defer_time * 1000 < 9 * cur->psandbox->average_execution_time * cur->psandbox->rule.isolation_level) {
 						/* printk(KERN_INFO "2. psandbox=%d skip! looping through competitors_map %d", psandbox->bid, count); */
 						continue;
 					}
 //						pr_info("after call continues %ld, defer time %llu, execution time %llu\n", cur->psandbox->bid,cur->psandbox->average_defer_time, cur->psandbox->average_execution_time);
 					break;
-				case SCALABLE:
+				case ISOLATION_SCALABLE:
 					if (cur->psandbox->average_defer_time * 1000  < 9 * cur->psandbox->average_execution_time * cur->psandbox->rule.isolation_level * live_psandbox) {
 						continue;
 					}
@@ -641,12 +641,12 @@ SYSCALL_DEFINE2(update_event, BoxEvent __user *, event, int, is_lazy) {
 				current_defer = timespec64_to_ns(&defer_tm);
 				current_execution = timespec64_to_ns(&executing_tm);
 				switch (cur->psandbox->rule.type) {
-					case RELATIVE:
+					case ISOLATION_RELATIVE:
 						if (current_defer * 100 > current_execution * cur->psandbox->rule.isolation_level) {
 							is_noisy = true;
 						}
 						break;
-					case SCALABLE:
+					case ISOLATION_SCALABLE:
 						if (current_defer * 100 >current_execution * cur->psandbox->rule.isolation_level * live_psandbox) {
 							is_noisy = true;
 						}
@@ -799,7 +799,7 @@ void do_penalty(PSandbox *victim, ktime_t penalty_ns, unsigned int key, int is_l
 	new_slack *= victim->average_defer_time;
 	old_slack *= victim->average_execution_time;
 	switch (victim->rule.type) {
-	case RELATIVE:
+	case ISOLATION_RELATIVE:
 		if (victim->average_defer_time * 100 > victim->average_execution_time * victim->rule.isolation_level) {
 			ktime_t gap,detla;
 			spin_lock(&stat_node->stat_lock);
@@ -825,7 +825,7 @@ void do_penalty(PSandbox *victim, ktime_t penalty_ns, unsigned int key, int is_l
 			spin_unlock(&stat_node->stat_lock);
 		}
 		break;
-	case SCALABLE:
+	case ISOLATION_SCALABLE:
 		if (victim->average_defer_time * 100 > victim->average_defer_time * victim->rule.isolation_level * live_psandbox) {
 				spin_lock(&stat_node->stat_lock);
 				stat_node->bad_action++;

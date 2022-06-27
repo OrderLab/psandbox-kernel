@@ -17,10 +17,6 @@
 #include <linux/ktime.h>
 struct task_struct;
 
-#define HIGHEST_PRIORITY 2
-#define MID_PRIORITY 1
-#define LOW_PRIORITY 0
-
 #define PREALLOCATION_SIZE 10
 #define HOLDER_SIZE 10000
 #define COMPETITORS_SIZE 10000
@@ -34,7 +30,9 @@ enum enum_event_type {
 	UNHOLD_IN_QUEUE_PENALTY,
 };
 
-enum enum_isolation_type { ABSOLUTE, RELATIVE, SCALABLE, ISOLATION_DEFAULT };
+enum enum_action_level { PSB_LOW_PRIORITY, PSB_MID_PRIORITY, PSB_HIGH_PRIORITY };
+
+enum enum_isolation_type { ISOLATION_ABSOLUTE, ISOLATION_RELATIVE, ISOLATION_SCALABLE, ISOLATION_DEFAULT };
 
 enum enum_penalty_type { PENALTY_NORMAL, PENALTY_AVERAGE, PENALTY_TAIL, PENALTY_GOOD, PENALTY_LONG, PENALTY_SHORT};
 typedef struct sandboxEvent {
@@ -123,7 +121,7 @@ struct psandbox_info {
 	Activity *activity;
 	long int finished_activities;
 	long int bad_activities;
-	long int action_level;
+	enum enum_action_level action_level;
 	ktime_t total_execution_time;
 	ktime_t total_penalty_time;
 	ktime_t total_defer_time;
