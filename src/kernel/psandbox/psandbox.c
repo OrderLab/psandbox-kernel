@@ -726,21 +726,21 @@ SYSCALL_DEFINE2(update_event, BoxEvent __user *, event, int, is_lazy) {
 }
 
 ktime_t calculate_starting_penalty_ns(PSandbox *victim,ktime_t penalty_ns,PSandbox *noisy,int type){
-	switch(type) {
-		case NORMAL:
+	switch (type) {
+		case PENALTY_NORMAL:
 			return penalty_ns;
-		case AVERAGE:
+		case PENALTY_AVERAGE:
 			return (int_sqrt64(penalty_ns*noisy->average_execution_time) - victim->average_execution_time);
-		case TAIL:
+		case PENALTY_TAIL:
 			return 100 * victim->average_execution_time;
-		case GOOD:
+		case PENALTY_GOOD:
 			return noisy->average_execution_time * noisy->rule.isolation_level/100;
-		case LONG: {
+		case PENALTY_LONG: {
 			ktime_t average_p =  int_sqrt64(penalty_ns*noisy->average_execution_time) - victim->average_execution_time;
 			ktime_t good_p = noisy->average_execution_time * noisy->rule.isolation_level/100;
 			return average_p > good_p? good_p: average_p;
 		}
-		case SHORT: {
+		case PENALTY_SHORT: {
 			ktime_t tail_p =  100 * victim->average_execution_time;
 			ktime_t good_p = noisy->average_execution_time * noisy->rule.isolation_level/100;
 			return tail_p > good_p? good_p: tail_p;

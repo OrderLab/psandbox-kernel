@@ -36,7 +36,7 @@ enum enum_event_type {
 
 enum enum_isolation_type { ABSOLUTE, RELATIVE, SCALABLE, ISOLATION_DEFAULT };
 
-enum enum_penalty_type {NORMAL, AVERAGE,TAIL,GOOD, LONG, SHORT};
+enum enum_penalty_type { PENALTY_NORMAL, PENALTY_AVERAGE, PENALTY_TAIL, PENALTY_GOOD, PENALTY_LONG, PENALTY_SHORT};
 typedef struct sandboxEvent {
 	enum enum_event_type event_type;
 	u32 key;
