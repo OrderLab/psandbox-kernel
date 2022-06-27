@@ -538,12 +538,12 @@ static inline struct request_sock *reqsk_queue_dequeue_predict(
 
 		if (!psandbox->requeued) {
 			switch(psandbox->rule.type) {
-			case RELATIVE:
+			case ISOLATION_RELATIVE:
 				add_tm_ns =
 					psandbox->average_execution_time / 100 * psandbox->rule.isolation_level;
 				break;
-			case ABSOLUTE:
-			case SCALABLE:
+			case ISOLATION_ABSOLUTE:
+			case ISOLATION_SCALABLE:
 				printk(KERN_INFO "Fail to handle isolation rule.");
 				break;
 			}
@@ -619,13 +619,13 @@ static inline struct request_sock *reqsk_queue_dequeue_detect(
 		tm_ns = timespec64_to_ns(&tm);
 
 		switch(psandbox->rule.type) {
-		case RELATIVE:
+		case ISOLATION_RELATIVE:
 			queue_tm_ns =
 				(psandbox->average_execution_time / 100 *
 				psandbox->rule.isolation_level) - tm_ns;
 			break;
-		case ABSOLUTE:
-		case SCALABLE:
+		case ISOLATION_ABSOLUTE:
+    case ISOLATION_SCALABLE:
 			printk(KERN_INFO "Fail to handle isolation rule scalable.");
 			break;
 		}
