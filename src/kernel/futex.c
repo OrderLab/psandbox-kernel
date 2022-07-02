@@ -1620,7 +1620,6 @@ futex_wake(u32 __user *uaddr, unsigned int flags, int nr_wake, u32 bitset)
 		current->psandbox->activity->c_resource_numbers--;
 	spin_lock(&hb->lock);
 
-
 	plist_for_each_entry_safe(this, next, &hb->chain, list) {
 		if (match_futex (&this->key, &key)) {
 			if (this->pi_state || this->rt_waiter) {
@@ -1646,9 +1645,10 @@ futex_wake(u32 __user *uaddr, unsigned int flags, int nr_wake, u32 bitset)
 					list_for_each_entry(pos,&v_psandbox->delay_list,list) {
 						if (pos->key == (u64)uaddr) {
 //							pr_info("the delaying start is %ds,%ds. the execution start is %d,%d\n",pos->delaying_start.tv_sec,pos->delaying_start.tv_nsec, v_psandbox->activity->execution_start.tv_sec,v_psandbox->activity->execution_start.tv_nsec);
-							if (timespec64_compare(&pos->delaying_start,&v_psandbox->activity->execution_start) ){
+							if (timespec64_compare(&pos->delaying_start,&v_psandbox->activity->execution_start) && timespec64_compare(current_tm,&pos->delaying_start){
 								defer_tm = timespec64_sub(current_tm,pos->delaying_start);
-								defer_tm = timespec64_sub(defer_tm,v_psandbox->activity->defer_time);
+								if (timespec64_to_ns(&defer_tm) < 10000)
+									continues;
 								executing_tm = timespec64_sub(timespec64_sub(current_tm, v_psandbox->activity->execution_start), defer_tm);
 								current_defer = timespec64_to_ns(&defer_tm);
 								current_execution = timespec64_to_ns(&executing_tm);
@@ -1691,17 +1691,16 @@ out:
 	//	set_current_state(TASK_INTERRUPTIBLE);
 	//	v_psandbox->activity->defer_time.tv_nsec = 0;
 	//	v_psandbox->activity->defer_time.tv_sec = 0;
-
-		if (penalty_ns > 1000000) {
-			pr_info("1.do sleep for v_psandbox %d, thread %d, defer time %u\n", v_psandbox->bid, current->pid, penalty_ns);
-			penalty_ns = 1000000;
+		if (penalty_ns < 0) {
+			pr_info("1.futex for v_psandbox %d, defer time is smaller than 0\n", v_psandbox->bid);
+		} else if (penalty_ns > 10000000000) {
+			pr_info("1.do sleep for v_psandbox %d, thread %d, defer time %llu ms\n", v_psandbox->bid, current->pid,  penalty_ns/1000000);
+			penalty_ns = 10000000000;
        			schedule_hrtimeout(&penalty_ns, HRTIMER_MODE_REL);
 		} else {
-			pr_info("2.do sleep for v_psandbox %d, thread %d, defer time %u\n", v_psandbox->bid, current->pid, penalty_ns);
- //			penalty_ns = 1000000;
+			pr_info("2.do sleep for v_psandbox %d, thread %d, defer time %llu ms\n", v_psandbox->bid, current->pid,  penalty_ns/1000000);
  			schedule_hrtimeout(&penalty_ns, HRTIMER_MODE_REL);
 		}
-
 	}
 	return ret;
 }

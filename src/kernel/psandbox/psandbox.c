@@ -534,25 +534,25 @@ SYSCALL_DEFINE2(update_event, BoxEvent __user *, event, int, is_lazy) {
 		write_unlock(&competitors_lock);
 
 
-		read_lock(&stat_map_lock);
-		hash_for_each_possible_safe(stat_map, stat_cur,tmp, node, key) {
-			if (stat_cur->psandbox == psandbox) {
-				is_duplicate = true;
-				break;
-			}
-		}
-		read_unlock(&stat_map_lock);
-		if (!is_duplicate) {
-			StatisticNode *stat_node;
-			stat_node = (StatisticNode *)kzalloc(sizeof(StatisticNode),GFP_KERNEL);
-			stat_node->bad_action = 0;
-			stat_node->psandbox = psandbox;
-			stat_node->step = 1;
-			spin_lock_init(&stat_node->stat_lock);
-			write_lock(&stat_map_lock);
-			hash_add(stat_map,&stat_node->node, key);
-			write_unlock(&stat_map_lock);
-		}
+//		read_lock(&stat_map_lock);
+//		hash_for_each_possible_safe(stat_map, stat_cur,tmp, node, key) {
+//			if (stat_cur->psandbox == psandbox) {
+//				is_duplicate = true;
+//				break;
+//			}
+//		}
+//		read_unlock(&stat_map_lock);
+//		if (!is_duplicate) {
+//			StatisticNode *stat_node;
+//			stat_node = (StatisticNode *)kzalloc(sizeof(StatisticNode),GFP_KERNEL);
+//			stat_node->bad_action = 0;
+//			stat_node->psandbox = psandbox;
+//			stat_node->step = 1;
+//			spin_lock_init(&stat_node->stat_lock);
+//			write_lock(&stat_map_lock);
+//			hash_add(stat_map,&stat_node->node, key);
+//			write_unlock(&stat_map_lock);
+//		}
 		break;
 	}
 	case ENTER: {
@@ -768,7 +768,15 @@ void do_penalty(PSandbox *victim, ktime_t penalty_ns, unsigned int key, int is_l
 	}
 	read_unlock(&stat_map_lock);
 	if(!stat_node) {
-		pr_info("Can't find the psandbox %ld in the stat map with key %u\n",victim->bid,key);
+		StatisticNode *stat_node;
+		stat_node = (StatisticNode *)kzalloc(sizeof(StatisticNode),GFP_KERNEL);
+		stat_node->bad_action = 0;
+		stat_node->psandbox = current->psandbox;
+		stat_node->step = 1;
+		spin_lock_init(&stat_node->stat_lock);
+		write_lock(&stat_map_lock);
+		hash_add(stat_map,&stat_node->node, key);
+		write_unlock(&stat_map_lock);
 		return;
 	}
 
@@ -1017,8 +1025,6 @@ int do_unbind(size_t addr){
 
 void do_freeze_psandbox(PSandbox *psandbox){
 	struct timespec64 current_tm, total_time, last_unbind_start;
-//	ktime_t average_defer;
-//	struct list_head temp;
 	ktime_t defer_tm;
 
 	psandbox->state = BOX_FREEZE;
@@ -1033,14 +1039,14 @@ void do_freeze_psandbox(PSandbox *psandbox){
 	last_unbind_start = psandbox->activity->last_unbind_start;
 
 	//adjust actual execution time
-	if (psandbox->total_execution_time > psandbox->activity->adjust_ns) {
-		psandbox->total_execution_time -= psandbox->activity->adjust_ns;
-		if (psandbox->finished_activities)
-			psandbox->average_execution_time = psandbox->total_execution_time/psandbox->finished_activities;
-	} else {
-		psandbox->total_execution_time = 0;
-		psandbox->average_execution_time = 0;
-	}
+//	if (psandbox->total_execution_time > psandbox->activity->adjust_ns) {
+//		psandbox->total_execution_time -= psandbox->activity->adjust_ns;
+//		if (psandbox->finished_activities)
+//			psandbox->average_execution_time = psandbox->total_execution_time/psandbox->finished_activities;
+//	} else {
+//		psandbox->total_execution_time = 0;
+//		psandbox->average_execution_time = 0;
+//	}
 
 	defer_tm = timespec64_to_ns(&psandbox->activity->defer_time);
 	psandbox->total_defer_time += defer_tm;
