@@ -456,6 +456,66 @@ static inline void __reqsk_queue_add(struct request_sock_queue *queue,
 	return;
 }
 
+struct sock *__inet_csk_accept_fcfs(struct sock *sk, int flags, int *err, bool kern)
+{
+	struct inet_connection_sock *icsk = inet_csk(sk);
+	struct request_sock_queue *queue = &icsk->icsk_accept_queue;
+	struct request_sock *req;
+	struct sock *newsk;
+	int error;
+
+	lock_sock(sk);
+
+	/* We need to make sure that this socket is listening,
+	 * and that it has something pending.
+	 */
+	error = -EINVAL;
+	if (sk->sk_state != TCP_LISTEN)
+		goto out_err;
+
+	/* Find already established connection */
+	if (reqsk_queue_empty(queue)) {
+		long timeo = sock_rcvtimeo(sk, flags & O_NONBLOCK);
+
+		/* If this is a non blocking socket don't sleep */
+		error = -EAGAIN;
+		if (!timeo)
+			goto out_err;
+
+		error = inet_csk_wait_for_connect(sk, timeo);
+		if (error)
+			goto out_err;
+	}
+	req = reqsk_queue_remove(queue, sk);
+	newsk = req->sk;
+
+	if (sk->sk_protocol == IPPROTO_TCP &&
+	    tcp_rsk(req)->tfo_listener) {
+		spin_lock_bh(&queue->fastopenq.lock);
+		if (tcp_rsk(req)->tfo_listener) {
+			/* We are still waiting for the final ACK from 3WHS
+			 * so can't free req now. Instead, we set req->sk to
+			 * NULL to signify that the child socket is taken
+			 * so reqsk_fastopen_remove() will free the req
+			 * when 3WHS finishes (or is aborted).
+			 */
+			req->sk = NULL;
+			req = NULL;
+		}
+		spin_unlock_bh(&queue->fastopenq.lock);
+	}
+out:
+	release_sock(sk);
+	if (req)
+		reqsk_put(req);
+	return newsk;
+out_err:
+	newsk = NULL;
+	req = NULL;
+	*err = error;
+	goto out;
+}
+
 /*
  * This accepts the next connection using prediction.
  */
@@ -501,7 +561,7 @@ struct sock *__inet_csk_accept_predict(struct sock *sk, int flags, int *err, boo
 #define BATCH_SIZE 512
 	int batch = BATCH_SIZE;
 	ktime_t loop_interval = ktime_set(0, 1000000 * 5);
-
+	int count = 0;
 	//TODO optimize
 	// can use cond var and store all requeued psandbox
 	// in a sorted list, and check when to expire in the
@@ -525,7 +585,7 @@ struct sock *__inet_csk_accept_predict(struct sock *sk, int flags, int *err, boo
 		if (!(psandbox->unbind_flags & UNBIND_HANDLE_ACCEPT))
 			break;
 
-		// count++;
+		 count++;
 		// printk(KERN_INFO "------------- Accept it %d psandbox %llu, avg exec time %llu, requeued %d, expected out %llu \n",
 		// 		count, psandbox->task_key, psandbox->average_execution_time, psandbox->requeued,
 		// 		timespec64_to_ns(&psandbox->activity->expected_queue_out));
@@ -662,8 +722,6 @@ struct sock *__inet_csk_accept_detect(struct sock *sk, int flags, int *err, bool
 	ktime_t current_tm_ns, queue_tm_ns, tm_ns, min_tm_ns;
 	PSandbox *psandbox = NULL;
 	size_t addr;
-	// unsigned long irq_state;
-	// spin_lock_irqsave(&queue->rskq_lock, irq_state);
 
 	count = (count + 1) % 2;
 	int loop_count = 0;
@@ -673,10 +731,9 @@ struct sock *__inet_csk_accept_detect(struct sock *sk, int flags, int *err, bool
 	ktime_get_real_ts64(&current_tm);
 	current_tm_ns = timespec64_to_ns(&current_tm);
 
-	printk(KERN_INFO "------------start---------------");
 	curr = queue->rskq_accept_head;
 	victim = queue->rskq_accept_head;
-	for (; curr; curr = curr->dl_next) {
+	for (; curr; prev = curr, curr = curr->dl_next) {
 
 		addr = curr->sk->sk_daddr;
 		psandbox = get_unbind_psandbox(addr);
@@ -684,7 +741,6 @@ struct sock *__inet_csk_accept_detect(struct sock *sk, int flags, int *err, bool
 		if (!psandbox ||
 		    !(psandbox->unbind_flags & UNBIND_HANDLE_ACCEPT)) {
 			if (count) {
-				printk(KERN_INFO "!psandbox");
 				victim = queue->rskq_accept_head;
 				break;
 			} else continue;
@@ -711,7 +767,6 @@ struct sock *__inet_csk_accept_detect(struct sock *sk, int flags, int *err, bool
 			min_tm_ns = queue_tm_ns;
 		} else {
 			if (min_tm_ns > queue_tm_ns) {
-				printk(KERN_INFO "!!!!!!!!!find victim");
 				min_tm_ns = queue_tm_ns;
 				victim = curr;
 				victim_prev = prev;
@@ -720,11 +775,9 @@ struct sock *__inet_csk_accept_detect(struct sock *sk, int flags, int *err, bool
 
 		printk(KERN_INFO "it %d, curr %x, min %lld, queue %lld", loop_count, curr, min_tm_ns, queue_tm_ns);
 
-		prev = curr;
 		loop_count++;
 	}
-	printk(KERN_INFO "loop len %d, victim %x, victim_prev %x, head %x, tail %x", loop_count,
-	       victim, victim_prev, queue->rskq_accept_head, queue->rskq_accept_tail);
+
 	// remove victim from the queue
 	if (victim == queue->rskq_accept_head) {
 		req = queue->rskq_accept_head;
@@ -737,25 +790,19 @@ struct sock *__inet_csk_accept_detect(struct sock *sk, int flags, int *err, bool
 	} else if (victim == queue->rskq_accept_tail) {
 		req = queue->rskq_accept_tail;
 		if (req) {
-			printk(KERN_INFO "123 - 1");
 			sk_acceptq_removed(sk);
-			printk(KERN_INFO "123 - 2");
 			WRITE_ONCE(victim_prev->dl_next, NULL);
-			printk(KERN_INFO "123 - 3");
 		}
 	} else {
 		req = victim;
 		if (req) {
-			printk(KERN_INFO "abc - 1");
 			sk_acceptq_removed(sk);
-			printk(KERN_INFO "abc - 2");
 			WRITE_ONCE(victim_prev->dl_next, victim->dl_next);
-			printk(KERN_INFO "abc - 3");
 		}
 	}
 	newsk = req->sk;
 	// spin_unlock_irqrestore(&queue->rskq_lock, irq_state);
-	printk(KERN_INFO "------------enddd---------------");
+
 	spin_unlock_bh(&queue->rskq_lock);
 
 	// debug, hold
@@ -794,7 +841,7 @@ out_err:
  */
 struct sock *inet_csk_accept(struct sock *sk, int flags, int *err, bool kern)
 {
-	return __inet_csk_accept_detect(sk, flags, err, kern);
+	return __inet_csk_accept_predict(sk, flags, err, kern);
 }
 EXPORT_SYMBOL(inet_csk_accept);
 
@@ -1258,45 +1305,10 @@ struct sock *__inet_csk_reqsk_queue_add_detect(struct sock *sk,
 		inet_child_forget(sk, req, child);
 		child = NULL;
 	} else {
-
-		// PSandbox change
-		//XXX get psandbox, check for unbind time (last time)
-		// if bad, we sleep for a while before add to the queue
-		// printk(KERN_INFO "!!!! YO LETS FINALLY ADD REQSK TO THE QUEUE \n");
-		// signed int addr = child->sk_daddr;
-		// size_t addr = child->sk_daddr;
-		// printk(KERN_INFO "!!!! YO sk_daddr %d\n", child->sk_daddr);
-
-		size_t addr = child->sk_daddr;
-		// if (addr == 2658904256) {
-		// 	struct timespec64 current_tm;
-		// 	ktime_get_real_ts64(&current_tm);
-		// 	printk(KERN_INFO "+++++ IN QUEUE %llu, %llu", addr, current_tm.tv_sec);
-		// }
-
-
 		PSandbox *psandbox = NULL;
-		// printk(KERN_INFO "!!!! YO sk_daddr %d, psandbox=%x\n", child->sk_daddr, get_psandbox_unbind(addr));
 		psandbox = get_unbind_psandbox(addr);
-		if (psandbox) {
-			// printk(KERN_INFO "!!!! YO get psandbox unbind %lld \n", psandbox->task_key);
-
+		if (psandbox)
 			ktime_get_real_ts64(&psandbox->activity->last_queue_in);
-
-
-			// ktime_t unbind_tm = timespec64_to_ns(&psandbox->activity->unbind_time);
-			//XXX activity gets cleared in do_freaze, add a field in psanbox
-			// only last bind-unbind time or total?
-			// printk(KERN_INFO ">>>>> nsec %llu \n", psandbox->last_queue_time);
-			//XXX 1. do track first, see if I can find the unbind_time...
-			//XXX change ... do penalty, remote
-			// do_penalty(psandbox, psandbox->activity->unbind_time.tv_nsec, addr);
-
-		} else {
-			// printk(KERN_INFO "!!!! YO DIDN'T get psandbox unbind :( addr= %d  psandbox=%x\n", addr, psandbox);
-		}
-
-		// // printk(KERN_INFO "!!!! YO rcv_saddr %x\n", inet_csk(sk)->icsk_inet.inet_saddr);
 
 
 		req->sk = child;
@@ -1316,7 +1328,7 @@ struct sock *inet_csk_reqsk_queue_add(struct sock *sk,
 				      struct request_sock *req,
 				      struct sock *child)
 {
-	return __inet_csk_reqsk_queue_add_detect(sk, req, child);
+	return __inet_csk_reqsk_queue_add_predict(sk, req, child);
 }
 EXPORT_SYMBOL(inet_csk_reqsk_queue_add);
 
