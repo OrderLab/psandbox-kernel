@@ -100,20 +100,18 @@ SYSCALL_DEFINE3(create_psandbox, int, type, int, isolation_level, int, priority)
 
 	pr_info("psandbox syscall called psandbox_create id =%ld by thread %d\n",
 	       psandbox->bid,current->pid);
-	return psandbox->bid;
+	return current->pid;
 }
 
 SYSCALL_DEFINE1(release_psandbox, int, pid)
 {
-	PSandbox *psandbox = get_psandbox(pid);
-	struct task_struct *task = psandbox->current_task;
-	if (!psandbox) {
-		printk(KERN_INFO "can't find sandbox based on the id\n");
+	struct task_struct *task = find_get_task_by_vpid(pid);
+	if (!task) {
+		pr_info( "can't find sandbox based on the id\n");
 		return -1;
 	}
-	if (!task) {
-		printk(KERN_INFO "psandbox has already been released\n");
-
+	if (!task->psandbox) {
+		pr_info( "there is no psandbox in task %d\n", task->pid);
 		return 0;
 	}
 
@@ -892,33 +890,20 @@ SYSCALL_DEFINE2(unbind_psandbox, size_t, addr, int, flags)
 		pr_info("can't find psandbox to unbind\n");
 		return -1;
 	}
-
-	// XXX We use old unbind flags because UNHOLD is the last state event
-	// to update when finishing and events should start with PREPARE.
-	if (psandbox->unbind_flags & UNBIND_HANDLE_ACCEPT &&
-		psandbox->event_key) {
-//		do_unhold(psandbox, psandbox->event_key, UNHOLD_IN_QUEUE_PENALTY);
-		/* printk(KERN_INFO "UNBIND PSANDBOX %d: event_key %lu\n", psandbox->bid, psandbox->event_key); */
-	}
-
-	// XXX Here we set the new flags
-	psandbox->unbind_flags = flags;
 	psandbox->is_lazy = flags & UNBIND_LAZY;
+	// psandbox->is_accept = isAccept;
+	psandbox->unbind_flags = flags;
 	current->is_psandbox = 0;
-	psandbox->task_key = addr;
+	psandbox->task_key =  addr;
 	ktime_get_real_ts64(&psandbox->activity->last_unbind_start);
 	do_freeze_psandbox(psandbox);
-
-	/* if (flags & UNBIND_HANDLE_ACCEPT) */
-		/* printk(KERN_INFO "psandbox %d: avg defer=%lu, avg exec=%lu, finished=%d", */
-			/* psandbox->bid, psandbox->average_defer_time, psandbox->average_execution_time, psandbox->finished_activities); */
-
+	// pr_info("lazy unbind psandbox %d to addr %d\n", psandbox->bid,addr);
 	if (!psandbox->is_lazy) {
+		// pr_info("task %d: !!! do unbind for addr %llu\n", current->pid, addr);
 		do_unbind(0);
-		//printk(KERN_INFO "task %d: !!! do unbind psandbox %d for addr %llu, is_psandbox %d\n", current->pid, pid, addr, current->is_psandbox);
 	}
 
-	return psandbox->bid;
+	return pid;
 }
 
 SYSCALL_DEFINE1(bind_psandbox, size_t, addr)
@@ -979,7 +964,7 @@ SYSCALL_DEFINE1(bind_psandbox, size_t, addr)
 	// pr_info("task %d: +++ do bind psandbox %d for addr %llu\n", current->pid, psandbox->bid, addr);
 
 
-	return psandbox->bid;
+	return psandbox->current_task->pid;
 }
 
 int do_unbind(size_t addr){
