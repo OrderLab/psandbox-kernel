@@ -489,7 +489,6 @@ SYSCALL_DEFINE2(update_event, BoxEvent __user *, event, int, is_lazy) {
 	psandbox = current->psandbox;
 	psandbox->count++;
 
-
 	switch (event_type) {
 	case PREPARE: {
 		int is_duplicate = false;
@@ -871,6 +870,7 @@ SYSCALL_DEFINE2(unbind_psandbox, size_t, addr, int, flags)
 	PSandbox *psandbox = current->psandbox;
 	pid_t pid = psandbox->current_task->pid;
 	PSandboxNode *a = NULL;
+	int i;
 	if (!psandbox) {
 		pr_info("can't find psandbox to unbind\n");
 		return -1;
@@ -909,6 +909,7 @@ SYSCALL_DEFINE1(bind_psandbox, size_t, addr)
 	PSandbox *psandbox = NULL;
 	PSandboxNode *cur;
 	struct hlist_node *tmp;
+	struct timespec64 current_tm,unbind_tm;
 
 	write_lock(&transfers_lock);
 	hash_for_each_possible_safe (transfers_map, cur, tmp, node, addr) {
