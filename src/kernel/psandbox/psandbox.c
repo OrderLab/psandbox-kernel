@@ -421,18 +421,18 @@ int do_unhold(PSandbox *psandbox, unsigned int key, unsigned int event_type) {
 	read_unlock(&competitors_lock);
 
 	if (event_type == UNHOLD) {
-		if (is_lazy) {
-			if (penalty_ns > 10000 && victim) {
-				psandbox->activity->victim_id = victim->current_task->pid;
-				psandbox->activity->key = key;
-				psandbox->activity->penalty_ns = penalty_ns;
-//				pr_info("call do update %d, victim id %d, key %lu \n",psandbox->bid,psandbox->activity->victim_id,psandbox->activity->key);
-				return penalty_ns;
-			} else {
-//				pr_info("the penalty is %lu\n",penalty_ns);
-				return 0;
-			}
-		}
+//		if (is_lazy) {
+//			if (penalty_ns > 10000 && victim) {
+//				psandbox->activity->victim_id = victim->current_task->pid;
+//				psandbox->activity->key = key;
+//				psandbox->activity->penalty_ns = penalty_ns;
+////				pr_info("call do update %d, victim id %d, key %lu \n",psandbox->bid,psandbox->activity->victim_id,psandbox->activity->key);
+//				return penalty_ns;
+//			} else {
+////				pr_info("the penalty is %lu\n",penalty_ns);
+//				return 0;
+//			}
+//		}
 
 		if (penalty_ns > 10000 && victim) {
 			if (penalty_ns > victim->average_execution_time * LONG_SECTION) {
