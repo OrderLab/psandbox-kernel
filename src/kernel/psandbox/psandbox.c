@@ -875,12 +875,12 @@ SYSCALL_DEFINE2(unbind_psandbox, size_t, addr, int, flags)
 		pr_info("can't find psandbox to unbind\n");
 		return -1;
 	}
-
+	do_unbind(0);
 	psandbox->unbind_flags = flags;
 	current->is_psandbox = 0;
 	psandbox->task_key =  addr;
 	ktime_get_real_ts64(&psandbox->activity->last_unbind_start);
-	do_unbind(0);
+
 	do_freeze_psandbox(psandbox);
 
 
@@ -944,12 +944,12 @@ int do_unbind(size_t addr){
 		return 0;
 	}
 
-	if(current->psandbox->task_key == addr) {
-		current->psandbox->unbind_flags = UNBIND_NONE;
-		current->psandbox->state = BOX_ACTIVE;
-		ktime_get_real_ts64(&current->psandbox->activity->execution_start);
-		return current->pid;
-	}
+//	if(current->psandbox->task_key == addr) {
+//		current->psandbox->unbind_flags = UNBIND_NONE;
+//		current->psandbox->state = BOX_ACTIVE;
+//		ktime_get_real_ts64(&current->psandbox->activity->execution_start);
+//		return current->pid;
+//	}
 
 	for (i = 0; i < PREALLOCATION_SIZE; ++i) {
 		if (psandbox->transfers[i].psandbox == NULL) {
