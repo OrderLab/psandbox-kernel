@@ -1305,6 +1305,7 @@ struct sock *__inet_csk_reqsk_queue_add_detect(struct sock *sk,
 		inet_child_forget(sk, req, child);
 		child = NULL;
 	} else {
+		size_t addr = child->sk_daddr;
 		PSandbox *psandbox = NULL;
 		psandbox = get_unbind_psandbox(addr);
 		if (psandbox)
