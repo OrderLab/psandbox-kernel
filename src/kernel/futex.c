@@ -1645,10 +1645,10 @@ futex_wake(u32 __user *uaddr, unsigned int flags, int nr_wake, u32 bitset)
 					list_for_each_entry(pos,&v_psandbox->delay_list,list) {
 						if (pos->key == (u64)uaddr) {
 //							pr_info("the delaying start is %ds,%ds. the execution start is %d,%d\n",pos->delaying_start.tv_sec,pos->delaying_start.tv_nsec, v_psandbox->activity->execution_start.tv_sec,v_psandbox->activity->execution_start.tv_nsec);
-							if (timespec64_compare(&pos->delaying_start,&v_psandbox->activity->execution_start) && timespec64_compare(current_tm,&pos->delaying_start){
+							if (timespec64_compare(&pos->delaying_start,&v_psandbox->activity->execution_start) && timespec64_compare(&current_tm,&pos->delaying_start)){
 								defer_tm = timespec64_sub(current_tm,pos->delaying_start);
 								if (timespec64_to_ns(&defer_tm) < 10000)
-									continues;
+									continue;
 								executing_tm = timespec64_sub(timespec64_sub(current_tm, v_psandbox->activity->execution_start), defer_tm);
 								current_defer = timespec64_to_ns(&defer_tm);
 								current_execution = timespec64_to_ns(&executing_tm);
