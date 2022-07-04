@@ -549,14 +549,14 @@ struct sock *__inet_csk_accept_predict(struct sock *sk, int flags, int *err, boo
 
 		if (!psandbox->requeued) {
 			switch(psandbox->rule.type) {
-			case ABSOLUTE:
+			case ISOLATION_ABSOLUTE:
 				add_tm_ns = psandbox->rule.isolation_level; //XXXassume ns
 				break;
-			case RELATIVE:
+			case ISOLATION_RELATIVE:
 				add_tm_ns =
 					psandbox->average_execution_time / 100 * psandbox->rule.isolation_level;
 				break;
-			case SCALABLE:
+			case ISOLATION_SCALABLE:
 				printk(KERN_INFO "Fail to handle isolation rule scalable.");
 				break;
 			}
@@ -694,13 +694,13 @@ struct sock *__inet_csk_accept_detect(struct sock *sk, int flags, int *err, bool
 		tm_ns = timespec64_to_ns(&tm);
 
 		switch(psandbox->rule.type) {
-		case RELATIVE:
+		case ISOLATION_RELATIVE:
 			queue_tm_ns =
 				(psandbox->average_execution_time / 100 *
 				 psandbox->rule.isolation_level) - tm_ns;
 			break;
-		case ABSOLUTE:
-		case SCALABLE:
+		case ISOLATION_ABSOLUTE:
+		case ISOLATION_SCALABLE:
 			printk(KERN_INFO "Fail to handle isolation rule scalable.");
 			break;
 		}

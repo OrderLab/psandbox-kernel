@@ -115,7 +115,7 @@ SYSCALL_DEFINE1(release_psandbox, int, pid)
 		return 0;
 	}
 
-	clean_psandbox(psandbox);
+	clean_psandbox(task->psandbox);
 	task->psandbox = NULL;
 	task->is_psandbox = 0;
 	return 0;
