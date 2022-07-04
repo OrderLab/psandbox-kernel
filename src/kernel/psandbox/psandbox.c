@@ -870,20 +870,36 @@ SYSCALL_DEFINE2(unbind_psandbox, size_t, addr, int, flags)
 {
 	PSandbox *psandbox = current->psandbox;
 	pid_t pid = psandbox->current_task->pid;
-
+	PSandboxNode *a = NULL;
 	if (!psandbox) {
 		pr_info("can't find psandbox to unbind\n");
 		return -1;
 	}
-	do_unbind(0);
+
+	for (i = 0; i < PREALLOCATION_SIZE; ++i) {
+		if (psandbox->transfers[i].psandbox == NULL) {
+			a = psandbox->transfers + i;
+			break;
+		}
+	}
+
+	if (!a)	{
+		a = (PSandboxNode *)kzalloc(sizeof(PSandboxNode),GFP_KERNEL);
+	}
+
+	psandbox->current_task = NULL;
+	current->psandbox = NULL;
+	a->psandbox = psandbox;
+	write_lock(&transfers_lock);
+	// pr_info("!!!------- INSIDE do unbind for addr %d\n", addr);
+	hash_add(transfers_map,&a->node,addr);
+	write_unlock(&transfers_lock);
+
 	psandbox->unbind_flags = flags;
 	current->is_psandbox = 0;
 	psandbox->task_key =  addr;
 	ktime_get_real_ts64(&psandbox->activity->last_unbind_start);
-
 	do_freeze_psandbox(psandbox);
-
-
 
 	return pid;
 }
@@ -893,11 +909,6 @@ SYSCALL_DEFINE1(bind_psandbox, size_t, addr)
 	PSandbox *psandbox = NULL;
 	PSandboxNode *cur;
 	struct hlist_node *tmp;
-	int success;
-	struct timespec64 current_tm, unbind_tm;
-
-	if( success != 0 )
-		return success;
 
 	write_lock(&transfers_lock);
 	hash_for_each_possible_safe (transfers_map, cur, tmp, node, addr) {
@@ -932,46 +943,6 @@ SYSCALL_DEFINE1(bind_psandbox, size_t, addr)
 	psandbox->activity->unbind_time = unbind_tm;
 
 	return psandbox->current_task->pid;
-}
-
-int do_unbind(size_t addr){
-	PSandboxNode *a = NULL;
-	int i;
-	PSandbox *psandbox = current->psandbox;
-
-	if (!current->psandbox) {
-//		pr_info("can't find psandbox to do unbind\n");
-		return 0;
-	}
-
-//	if(current->psandbox->task_key == addr) {
-//		current->psandbox->unbind_flags = UNBIND_NONE;
-//		current->psandbox->state = BOX_ACTIVE;
-//		ktime_get_real_ts64(&current->psandbox->activity->execution_start);
-//		return current->pid;
-//	}
-
-	for (i = 0; i < PREALLOCATION_SIZE; ++i) {
-		if (psandbox->transfers[i].psandbox == NULL) {
-			a = psandbox->transfers + i;
-			break;
-		}
-	}
-
-	if (!a)	{
-		a = (PSandboxNode *)kzalloc(sizeof(PSandboxNode),GFP_KERNEL);
-	}
-
-	psandbox->current_task = NULL;
-	current->psandbox = NULL;
-	current->is_psandbox = 0;
-	a->psandbox = psandbox;
-	write_lock(&transfers_lock);
-	// pr_info("!!!------- INSIDE do unbind for addr %d\n", addr);
-	hash_add(transfers_map,&a->node,psandbox->task_key);
-	write_unlock(&transfers_lock);
-
-	return 0;
 }
 
 void do_freeze_psandbox(PSandbox *psandbox){
