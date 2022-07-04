@@ -897,7 +897,7 @@ SYSCALL_DEFINE2(unbind_psandbox, size_t, addr, int, flags)
 	// to update when finishing and events should start with PREPARE.
 	if (psandbox->unbind_flags & UNBIND_HANDLE_ACCEPT &&
 		psandbox->event_key) {
-		do_unhold(psandbox, psandbox->event_key, UNHOLD_IN_QUEUE_PENALTY);
+//		do_unhold(psandbox, psandbox->event_key, UNHOLD_IN_QUEUE_PENALTY);
 		/* printk(KERN_INFO "UNBIND PSANDBOX %d: event_key %lu\n", psandbox->bid, psandbox->event_key); */
 	}
 

@@ -1319,7 +1319,7 @@ struct sock *do_inet_csk_reqsk_queue_add(struct sock *sk,
 			if (psandbox->unbind_flags & UNBIND_HANDLE_ACCEPT) {
 				// prepare before entering the kernel queue
 				psandbox->event_key = queue;
-				do_prepare(psandbox, psandbox->event_key);
+//				do_prepare(psandbox, psandbox->event_key);
 			}
 		}
 
