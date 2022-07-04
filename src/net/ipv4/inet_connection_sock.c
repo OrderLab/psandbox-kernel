@@ -586,10 +586,6 @@ struct sock *__inet_csk_accept_predict(struct sock *sk, int flags, int *err, boo
 			break;
 
 		 count++;
-		// printk(KERN_INFO "------------- Accept it %d psandbox %llu, avg exec time %llu, requeued %d, expected out %llu \n",
-		// 		count, psandbox->task_key, psandbox->average_execution_time, psandbox->requeued,
-		// 		timespec64_to_ns(&psandbox->activity->expected_queue_out));
-
 		ktime_get_real_ts64(&current_tm);
 		current_tm_ns = timespec64_to_ns(&current_tm);
 		expected_out_tm_ns = timespec64_to_ns(&psandbox->activity->expected_queue_out);
@@ -772,8 +768,6 @@ struct sock *__inet_csk_accept_detect(struct sock *sk, int flags, int *err, bool
 				victim_prev = prev;
 			}
 		}
-
-		printk(KERN_INFO "it %d, curr %x, min %lld, queue %lld", loop_count, curr, min_tm_ns, queue_tm_ns);
 
 		loop_count++;
 	}

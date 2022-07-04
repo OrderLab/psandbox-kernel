@@ -52,10 +52,6 @@ SYSCALL_DEFINE3(create_psandbox, int, type, int, isolation_level, int, priority)
 		return -1;
 	}
 
-	if(current->psandbox && current->psandbox->is_lazy) {
-		do_unbind(0);
-	}
-
 	psandbox->current_task = current;
 	psandbox->activity = (Activity *)kzalloc(sizeof(Activity), GFP_KERNEL);
 	psandbox->state = BOX_START;
@@ -69,7 +65,6 @@ SYSCALL_DEFINE3(create_psandbox, int, type, int, isolation_level, int, priority)
 	psandbox->is_futex =0;
 	psandbox->bad_activities = 0;
 	psandbox->creator_psandbox = current;
-	psandbox->is_lazy = 0;
 	// psandbox->is_accept = 0;
 	psandbox->unbind_flags = UNBIND_NONE;
 	psandbox->requeued = 0;
@@ -234,8 +229,6 @@ int do_prepare(PSandbox *psandbox, unsigned int key) {
 	/* psandbox = current->psandbox; */
 	psandbox->count++;
 
-	if(psandbox->is_lazy == 1)
-		return 0;
 
 	// in switch
 	int is_duplicate = false;
@@ -296,8 +289,6 @@ int do_enter(PSandbox *psandbox, unsigned int key) {
 	}
 	psandbox->count++;
 
-	if(psandbox->is_lazy == 1)
-		return 0;
 
 	// enter start
 	struct timespec64 current_tm, defer_tm;
@@ -342,11 +333,7 @@ int do_unhold(PSandbox *psandbox, unsigned int key, unsigned int event_type) {
 	}
 	psandbox->count++;
 
-	if(psandbox->is_lazy == 1)
-		return 0;
 
-	// unhold start
-	int is_lazy = 0; // not doing lazy
 
 	struct timespec64 current_tm, defer_tm, executing_tm;
 	ktime_t penalty_ns = 0, old_defer = 0, old_execution = 1,
@@ -501,8 +488,6 @@ SYSCALL_DEFINE2(update_event, BoxEvent __user *, event, int, is_lazy) {
 	}
 	psandbox = current->psandbox;
 	psandbox->count++;
-	if(psandbox->is_lazy == 1)
-		return 0;
 
 
 	switch (event_type) {
@@ -853,7 +838,7 @@ void do_penalty(PSandbox *victim, ktime_t penalty_ns, unsigned int key, int is_l
 
 SYSCALL_DEFINE0(get_current_psandbox)
 {
-	if (!current->psandbox || current->psandbox->is_lazy) {
+	if (!current->psandbox) {
 //		pr_info("there is no psandbox in current thread\n");
 		return -1;
 	}
@@ -890,18 +875,15 @@ SYSCALL_DEFINE2(unbind_psandbox, size_t, addr, int, flags)
 		pr_info("can't find psandbox to unbind\n");
 		return -1;
 	}
-	psandbox->is_lazy = flags & UNBIND_LAZY;
-	// psandbox->is_accept = isAccept;
+
 	psandbox->unbind_flags = flags;
 	current->is_psandbox = 0;
 	psandbox->task_key =  addr;
 	ktime_get_real_ts64(&psandbox->activity->last_unbind_start);
+	do_unbind(0);
 	do_freeze_psandbox(psandbox);
-	// pr_info("lazy unbind psandbox %d to addr %d\n", psandbox->bid,addr);
-	if (!psandbox->is_lazy) {
-		// pr_info("task %d: !!! do unbind for addr %llu\n", current->pid, addr);
-		do_unbind(0);
-	}
+
+
 
 	return pid;
 }
@@ -914,8 +896,6 @@ SYSCALL_DEFINE1(bind_psandbox, size_t, addr)
 	int success;
 	struct timespec64 current_tm, unbind_tm;
 
-
-	success = do_unbind(addr);
 	if( success != 0 )
 		return success;
 
@@ -941,7 +921,6 @@ SYSCALL_DEFINE1(bind_psandbox, size_t, addr)
 	current->psandbox = psandbox;
 	current->is_psandbox = 1;
 	psandbox->current_task = current;
-	psandbox->is_lazy = 0;
 	// XXX Do NOT clear unbind flags here
 	/* psandbox->unbind_flags = UNBIND_NONE; */
 	psandbox->state = BOX_ACTIVE;
@@ -950,19 +929,7 @@ SYSCALL_DEFINE1(bind_psandbox, size_t, addr)
 	ktime_get_real_ts64(&current_tm);
 	unbind_tm =
 		timespec64_sub(current_tm, psandbox->activity->last_unbind_start);
-	// current_tm = psandbox->activity->unbind_time;
-	// psandbox->activity->unbind_time = timespec64_add(unbind_tm, current_tm);
 	psandbox->activity->unbind_time = unbind_tm;
-	// pr_info("bind the psandbox %d (find by addr %d) to thread %d\n",psandbox->bid,addr,current->pid);
-
-	// ktime_get_real_ts64(&current_tm);
-	// ktime_t tm = timespec64_to_ns(&psandbox->activity->unbind_time);
-	// pr_info("unbind time nsec %llu \n", timespec64_to_ns(&psandbox->activity->unbind_time));
-	// pr_info("current sec %llu \n", current_tm.tv_sec);
-	// pr_info("last time start sec %llu \n", psandbox->activity->last_unbind_start.tv_sec);
-	// pr_info("task %d: !!! bind psandbox for addr %llu\n", current->pid, addr);
-	// pr_info("task %d: +++ do bind psandbox %d for addr %llu\n", current->pid, psandbox->bid, addr);
-
 
 	return psandbox->current_task->pid;
 }
@@ -978,7 +945,6 @@ int do_unbind(size_t addr){
 	}
 
 	if(current->psandbox->task_key == addr) {
-		current->psandbox->is_lazy = 0;
 		current->psandbox->unbind_flags = UNBIND_NONE;
 		current->psandbox->state = BOX_ACTIVE;
 		ktime_get_real_ts64(&current->psandbox->activity->execution_start);
@@ -1140,7 +1106,6 @@ void clean_unbind_psandbox(struct task_struct *task) {
 	write_lock(&transfers_lock);
 	hash_for_each_safe(transfers_map, bkt, tmp, cur, node) {
 		if (cur->psandbox->creator_psandbox->pid == task->pid) {
-//			pr_info("the addr is %d, the lazy is %d for psandbox %d\n",cur->psandbox->task_key, cur->psandbox->is_lazy, cur->psandbox->bid);
 			hash_del(&cur->node);
 			write_unlock(&transfers_lock);
 			clean_psandbox(cur->psandbox);
