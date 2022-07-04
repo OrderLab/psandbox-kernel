@@ -785,9 +785,9 @@ struct sock *do_inet_csk_accept(struct sock *sk, int flags, int *err, bool kern)
 		if (error)
 			goto out_err;
 	}
-	/* req = reqsk_queue_remove(queue, sk); */
-	/* req = reqsk_queue_dequeue_fifo_debug(queue, sk); */
-	req = reqsk_queue_dequeue_2(queue, sk);
+//	req = reqsk_queue_remove(queue, sk);
+//	req = reqsk_queue_dequeue_fifo_debug(queue, sk);
+	req = reqsk_queue_dequeue_predict(queue, sk);
 	newsk = req->sk;
 
 	if (sk->sk_protocol == IPPROTO_TCP &&
