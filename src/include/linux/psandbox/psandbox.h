@@ -18,8 +18,8 @@
 struct task_struct;
 
 #define PREALLOCATION_SIZE 10
-#define HOLDER_SIZE 10000
-#define COMPETITORS_SIZE 10000
+#define HOLDER_SIZE 1000
+#define COMPETITORS_SIZE 1000
 #define SANDBOX_NUMBER 50
 
 enum enum_event_type {
