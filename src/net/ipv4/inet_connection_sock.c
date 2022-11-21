@@ -456,38 +456,6 @@ static inline void __reqsk_queue_add(struct request_sock_queue *queue,
 	return;
 }
 
-static inline struct request_sock *reqsk_queue_dequeue_fifo(
-	struct request_sock_queue *queue, struct sock *sk)
-{
-	return reqsk_queue_remove(queue, sk);
-}
-
-static inline struct request_sock *reqsk_queue_dequeue_fifo_debug(
-	struct request_sock_queue *queue, struct sock *sk)
-{
-	struct request_sock *req;
-	size_t addr;
-	PSandbox *psandbox = NULL;
-	struct timespec64 current_tm, tm;
-	ktime_t current_tm_ns, tm_ns;
-
-	req = reqsk_queue_remove(queue, sk);
-	addr = req->sk->sk_daddr;
-	psandbox = get_unbind_psandbox(addr);
-
-	if (psandbox) {
-		ktime_get_real_ts64(&current_tm);
-		tm = timespec64_sub(current_tm, psandbox->activity->last_queue_in);
-		tm_ns = timespec64_to_ns(&tm);
-		if (psandbox->unbind_flags & UNBIND_HANDLE_ACCEPT &&
-		    psandbox->event_key) {
-			do_enter(psandbox, psandbox->event_key);
-		}
-	}
-
-	return req;
-}
-
 
 static inline struct request_sock *reqsk_queue_dequeue_predict(
 	struct request_sock_queue *queue, struct sock *sk)
@@ -505,7 +473,7 @@ static inline struct request_sock *reqsk_queue_dequeue_predict(
 	ktime_t loop_interval = ktime_set(0, 1000000 * 5);
 
 	for (;;) {
-		//pop from from accept queue
+		//pop from accept queue
 		req = reqsk_queue_remove(queue, sk);
 		newsk = req->sk;
 		addr = newsk->sk_daddr;
@@ -548,8 +516,6 @@ static inline struct request_sock *reqsk_queue_dequeue_predict(
 				break;
 			}
 
-			// if (psandbox->average_execution_time <= 1000000000)
-			// 	break;
 			if (psandbox->average_execution_time <= 10000000)
 				break;
 
@@ -582,178 +548,178 @@ static inline struct request_sock *reqsk_queue_dequeue_predict(
 	return req;
 }
 
-static inline struct request_sock *reqsk_queue_dequeue_detect(
-	struct request_sock_queue *queue, struct sock *sk)
-{
-	struct request_sock *req;
-	struct timespec64 current_tm, max_tm, tm;
-	ktime_t current_tm_ns, queue_tm_ns, tm_ns, min_tm_ns;
-	PSandbox *psandbox = NULL;
-	size_t addr;
-	static int count = 0;
-
-	count = (count + 1) % 2;
-	int loop_count = 0;
-	spin_lock_bh(&queue->rskq_lock);
-	struct request_sock *curr, *prev;
-	struct request_sock *victim, *victim_prev;
-	ktime_get_real_ts64(&current_tm);
-	current_tm_ns = timespec64_to_ns(&current_tm);
-
-	curr = queue->rskq_accept_head;
-	victim = queue->rskq_accept_head;
-	for (; curr; prev = curr, curr = curr->dl_next) {
-
-		addr = curr->sk->sk_daddr;
-		psandbox = get_unbind_psandbox(addr);
-
-		if (!psandbox ||
-		    !(psandbox->unbind_flags & UNBIND_HANDLE_ACCEPT)) {
-			if (count) {
-				victim = queue->rskq_accept_head;
-				break;
-			} else continue;
-		}
-
-		tm = timespec64_sub(current_tm, psandbox->activity->last_queue_in);
-		tm_ns = timespec64_to_ns(&tm);
-
-		switch(psandbox->rule.type) {
-		case ISOLATION_RELATIVE:
-			queue_tm_ns =
-				(psandbox->average_execution_time / 100 *
-				 psandbox->rule.isolation_level) - tm_ns;
-			break;
-		case ISOLATION_ABSOLUTE:
-		case ISOLATION_SCALABLE:
-			printk(KERN_INFO "Fail to handle isolation rule scalable.");
-			break;
-		}
-
-		if (curr == queue->rskq_accept_head) {
-			min_tm_ns = queue_tm_ns;
-		} else {
-			if (min_tm_ns > queue_tm_ns) {
-				min_tm_ns = queue_tm_ns;
-				victim = curr;
-				victim_prev = prev;
-			}
-		}
-		// printk(KERN_INFO "it %d, curr %x, min %lld, queue %lld", loop_count, curr, min_tm_ns, queue_tm_ns);
-		// prev = curr;
-		loop_count++;
-	}
-	// printk(KERN_INFO "loop len %d, victim %x, victim_prev %x, head %x, tail %x", loop_count,
-	// 	victim, victim_prev, queue->rskq_accept_head, queue->rskq_accept_tail);
-	// remove victim from the queue
-	if (victim == queue->rskq_accept_head) {
-		req = queue->rskq_accept_head;
-		if (req) {
-			sk_acceptq_removed(sk);
-			WRITE_ONCE(queue->rskq_accept_head, req->dl_next);
-			if (queue->rskq_accept_head == NULL)
-				queue->rskq_accept_tail = NULL;
-		}
-	} else if (victim == queue->rskq_accept_tail) {
-		req = queue->rskq_accept_tail;
-		if (req) {
-			sk_acceptq_removed(sk);
-			WRITE_ONCE(victim_prev->dl_next, NULL);
-		}
-	} else {
-		req = victim;
-		if (req) {
-			sk_acceptq_removed(sk);
-			WRITE_ONCE(victim_prev->dl_next, victim->dl_next);
-		}
-	}
-	/* newsk = req->sk; */
-	spin_unlock_bh(&queue->rskq_lock);
-	return req;
-}
-
-static inline struct request_sock *reqsk_queue_dequeue_2(
-	struct request_sock_queue *queue, struct sock *sk)
-{
-	struct request_sock *req;
-	struct sock *newsk;
-	struct timespec64 current_tm, queue_tm, tm;
-	ktime_t current_tm_ns, expected_out_tm_ns, add_tm_ns;
-	PSandbox *psandbox;
-	size_t addr;
-	int batch, count = 0;
-
-#define BATCH_SIZE 512
-	batch = BATCH_SIZE;
-	ktime_t loop_interval = ktime_set(0, 1000000 * 5);
-
-	for (;;) {
-		// pop from from accept queue
-		req = reqsk_queue_remove(queue, sk);
-		newsk = req->sk;
-		addr = newsk->sk_daddr;
-		psandbox = NULL;
-		psandbox = get_unbind_psandbox(addr);
-
-		if (!psandbox ||
-		    !(psandbox->unbind_flags & UNBIND_HANDLE_ACCEPT) ||
-		    !psandbox->should_penalize_in_queue) {
-			break;
-		}
-
-		count++;
-
-		ktime_get_real_ts64(&current_tm);
-		current_tm_ns = timespec64_to_ns(&current_tm);
-		expected_out_tm_ns = timespec64_to_ns(&psandbox->activity->expected_queue_out);
-		if (expected_out_tm_ns <= current_tm_ns && psandbox->requeued) {
-			// Update pSandbox info, count in kernel queue time into total defer time
-			ktime_get_real_ts64(&current_tm);
-			tm = timespec64_sub(current_tm, psandbox->activity->last_queue_in);
-			psandbox->last_queue_time = timespec64_to_ns(&tm);
-			tm = timespec64_sub(current_tm, psandbox->activity->requeue_start);
-			psandbox->total_defer_time += timespec64_to_ns(&tm);
-			if (psandbox->finished_activities)
-				psandbox->average_defer_time =
-					psandbox->total_defer_time/psandbox->finished_activities;
-			// clear flags
-			psandbox->requeued = 0;
-			psandbox->should_penalize_in_queue = 0;
-			psandbox->in_queue_penalty_time = 0;
-			psandbox->in_queue_victim = NULL;
-			break;
-		}
-
-		if (!psandbox->requeued) {
-			tm = ns_to_timespec64(psandbox->in_queue_penalty_time);
-			psandbox->activity->expected_queue_out = timespec64_add(current_tm, tm);
-			ktime_get_real_ts64(&psandbox->activity->requeue_start);
-		}
-
-		psandbox->requeued += 1;
-		__reqsk_queue_add(queue, sk, req, newsk);
-
-		if (!--batch) {
-			batch = BATCH_SIZE;
-			__set_current_state(TASK_INTERRUPTIBLE);
-			schedule_hrtimeout(&loop_interval, HRTIMER_MODE_REL);
-		}
-	}
-#undef BATCH_SIZE
-
-	if (psandbox) {
-		ktime_get_real_ts64(&current_tm);
-		tm = timespec64_sub(current_tm, psandbox->activity->last_queue_in);
-		ktime_t tm_ns = timespec64_to_ns(&tm);
-		// update state event enter
-		if (psandbox->unbind_flags & UNBIND_HANDLE_ACCEPT &&
-		    psandbox->event_key) {
-			do_enter(psandbox, psandbox->event_key);
-		}
-	}
-
-	return req;
-}
+//static inline struct request_sock *reqsk_queue_dequeue_detect(
+//	struct request_sock_queue *queue, struct sock *sk)
+//{
+//	struct request_sock *req;
+//	struct timespec64 current_tm, max_tm, tm;
+//	ktime_t current_tm_ns, queue_tm_ns, tm_ns, min_tm_ns;
+//	PSandbox *psandbox = NULL;
+//	size_t addr;
+//	static int count = 0;
+//
+//	count = (count + 1) % 2;
+//	int loop_count = 0;
+//	spin_lock_bh(&queue->rskq_lock);
+//	struct request_sock *curr, *prev;
+//	struct request_sock *victim, *victim_prev;
+//	ktime_get_real_ts64(&current_tm);
+//	current_tm_ns = timespec64_to_ns(&current_tm);
+//
+//	curr = queue->rskq_accept_head;
+//	victim = queue->rskq_accept_head;
+//	for (; curr; prev = curr, curr = curr->dl_next) {
+//
+//		addr = curr->sk->sk_daddr;
+//		psandbox = get_unbind_psandbox(addr);
+//
+//		if (!psandbox ||
+//		    !(psandbox->unbind_flags & UNBIND_HANDLE_ACCEPT)) {
+//			if (count) {
+//				victim = queue->rskq_accept_head;
+//				break;
+//			} else continue;
+//		}
+//
+//		tm = timespec64_sub(current_tm, psandbox->activity->last_queue_in);
+//		tm_ns = timespec64_to_ns(&tm);
+//
+//		switch(psandbox->rule.type) {
+//		case ISOLATION_RELATIVE:
+//			queue_tm_ns =
+//				(psandbox->average_execution_time / 100 *
+//				 psandbox->rule.isolation_level) - tm_ns;
+//			break;
+//		case ISOLATION_ABSOLUTE:
+//		case ISOLATION_SCALABLE:
+//			printk(KERN_INFO "Fail to handle isolation rule scalable.");
+//			break;
+//		}
+//
+//		if (curr == queue->rskq_accept_head) {
+//			min_tm_ns = queue_tm_ns;
+//		} else {
+//			if (min_tm_ns > queue_tm_ns) {
+//				min_tm_ns = queue_tm_ns;
+//				victim = curr;
+//				victim_prev = prev;
+//			}
+//		}
+//		// printk(KERN_INFO "it %d, curr %x, min %lld, queue %lld", loop_count, curr, min_tm_ns, queue_tm_ns);
+//		// prev = curr;
+//		loop_count++;
+//	}
+//	// printk(KERN_INFO "loop len %d, victim %x, victim_prev %x, head %x, tail %x", loop_count,
+//	// 	victim, victim_prev, queue->rskq_accept_head, queue->rskq_accept_tail);
+//	// remove victim from the queue
+//	if (victim == queue->rskq_accept_head) {
+//		req = queue->rskq_accept_head;
+//		if (req) {
+//			sk_acceptq_removed(sk);
+//			WRITE_ONCE(queue->rskq_accept_head, req->dl_next);
+//			if (queue->rskq_accept_head == NULL)
+//				queue->rskq_accept_tail = NULL;
+//		}
+//	} else if (victim == queue->rskq_accept_tail) {
+//		req = queue->rskq_accept_tail;
+//		if (req) {
+//			sk_acceptq_removed(sk);
+//			WRITE_ONCE(victim_prev->dl_next, NULL);
+//		}
+//	} else {
+//		req = victim;
+//		if (req) {
+//			sk_acceptq_removed(sk);
+//			WRITE_ONCE(victim_prev->dl_next, victim->dl_next);
+//		}
+//	}
+//	/* newsk = req->sk; */
+//	spin_unlock_bh(&queue->rskq_lock);
+//	return req;
+//}
+//
+//static inline struct request_sock *reqsk_queue_dequeue_2(
+//	struct request_sock_queue *queue, struct sock *sk)
+//{
+//	struct request_sock *req;
+//	struct sock *newsk;
+//	struct timespec64 current_tm, queue_tm, tm;
+//	ktime_t current_tm_ns, expected_out_tm_ns, add_tm_ns;
+//	PSandbox *psandbox;
+//	size_t addr;
+//	int batch, count = 0;
+//
+//#define BATCH_SIZE 512
+//	batch = BATCH_SIZE;
+//	ktime_t loop_interval = ktime_set(0, 1000000 * 5);
+//
+//	for (;;) {
+//		// pop from from accept queue
+//		req = reqsk_queue_remove(queue, sk);
+//		newsk = req->sk;
+//		addr = newsk->sk_daddr;
+//		psandbox = NULL;
+//		psandbox = get_unbind_psandbox(addr);
+//
+//		if (!psandbox ||
+//		    !(psandbox->unbind_flags & UNBIND_HANDLE_ACCEPT) ||
+//		    !psandbox->should_penalize_in_queue) {
+//			break;
+//		}
+//
+//		count++;
+//
+//		ktime_get_real_ts64(&current_tm);
+//		current_tm_ns = timespec64_to_ns(&current_tm);
+//		expected_out_tm_ns = timespec64_to_ns(&psandbox->activity->expected_queue_out);
+//		if (expected_out_tm_ns <= current_tm_ns && psandbox->requeued) {
+//			// Update pSandbox info, count in kernel queue time into total defer time
+//			ktime_get_real_ts64(&current_tm);
+//			tm = timespec64_sub(current_tm, psandbox->activity->last_queue_in);
+//			psandbox->last_queue_time = timespec64_to_ns(&tm);
+//			tm = timespec64_sub(current_tm, psandbox->activity->requeue_start);
+//			psandbox->total_defer_time += timespec64_to_ns(&tm);
+//			if (psandbox->finished_activities)
+//				psandbox->average_defer_time =
+//					psandbox->total_defer_time/psandbox->finished_activities;
+//			// clear flags
+//			psandbox->requeued = 0;
+//			psandbox->should_penalize_in_queue = 0;
+//			psandbox->in_queue_penalty_time = 0;
+//			psandbox->in_queue_victim = NULL;
+//			break;
+//		}
+//
+//		if (!psandbox->requeued) {
+//			tm = ns_to_timespec64(psandbox->in_queue_penalty_time);
+//			psandbox->activity->expected_queue_out = timespec64_add(current_tm, tm);
+//			ktime_get_real_ts64(&psandbox->activity->requeue_start);
+//		}
+//
+//		psandbox->requeued += 1;
+//		__reqsk_queue_add(queue, sk, req, newsk);
+//
+//		if (!--batch) {
+//			batch = BATCH_SIZE;
+//			__set_current_state(TASK_INTERRUPTIBLE);
+//			schedule_hrtimeout(&loop_interval, HRTIMER_MODE_REL);
+//		}
+//	}
+//#undef BATCH_SIZE
+//
+//	if (psandbox) {
+//		ktime_get_real_ts64(&current_tm);
+//		tm = timespec64_sub(current_tm, psandbox->activity->last_queue_in);
+//		ktime_t tm_ns = timespec64_to_ns(&tm);
+//		// update state event enter
+//		if (psandbox->unbind_flags & UNBIND_HANDLE_ACCEPT &&
+//		    psandbox->event_key) {
+//			do_enter(psandbox, psandbox->event_key);
+//		}
+//	}
+//
+//	return req;
+//}
 
 struct sock *do_inet_csk_accept(struct sock *sk, int flags, int *err, bool kern)
 {
@@ -786,7 +752,6 @@ struct sock *do_inet_csk_accept(struct sock *sk, int flags, int *err, bool kern)
 			goto out_err;
 	}
 //	req = reqsk_queue_remove(queue, sk);
-//	req = reqsk_queue_dequeue_fifo_debug(queue, sk);
 	req = reqsk_queue_dequeue_predict(queue, sk);
 	newsk = req->sk;
 
@@ -1310,7 +1275,6 @@ struct sock *do_inet_csk_reqsk_queue_add(struct sock *sk,
 		inet_child_forget(sk, req, child);
 		child = NULL;
 	} else {
-
 		size_t addr = child->sk_daddr;
 		PSandbox *psandbox = NULL;
 		psandbox = get_unbind_psandbox(addr);
@@ -1319,7 +1283,6 @@ struct sock *do_inet_csk_reqsk_queue_add(struct sock *sk,
 			if (psandbox->unbind_flags & UNBIND_HANDLE_ACCEPT) {
 				// prepare before entering the kernel queue
 				psandbox->event_key = queue;
-				//				do_prepare(psandbox, psandbox->event_key);
 			}
 		}
 
