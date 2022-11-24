@@ -134,72 +134,7 @@ SYSCALL_DEFINE0(activate_psandbox)
 
 
 	if (psandbox->rule.is_retro) {
-		DemandNode demand[100];
-		int slowdown, current_demand, i = 0, unsatisfied,fair=0, capacity = 0, total = 0;
-		if (psandbox->average_defer_time == 0) {
-			return 0;
-		} else {
-			slowdown = psandbox->average_execution_time/(psandbox->average_execution_time-psandbox->average_defer_time);
-			current_demand = psandbox->average_execution_time-psandbox->average_defer_time;
-		}
-
-		write_lock(&psandbox_lock);
-		list_for_each_entry(pos,&psandbox_list,list) {
-			int load = pos->average_execution_time -
-				   pos->average_defer_time;
-			demand[i].demand = load;
-			demand[i].psandbox = pos;
-			demand[i].is_satisfied = 0;
-			i++;
-			capacity += load / 2;
-		}
-		total = capacity;
-		unsatisfied = i;
-		do {
-			int assigned, unused = 0,j;
-			if ( unsatisfied == 0) {
-//				pr_info("there is no live_psandbox\n");
-				break;
-			} else {
-				assigned = total/unsatisfied;
-			}
-
-			for (j=0; j < i; j++) {
-				if (demand[j].is_satisfied) {
-					continue;
-				}
-
-				if (assigned > demand[j].demand) {
-					unused = assigned - demand[j].demand;
-					unsatisfied--;
-					demand[j].is_satisfied = true;
-					if (demand[j].psandbox == psandbox) {
-						fair += demand[j].demand;
-					}
-				} else {
-					if (demand[j].psandbox == psandbox) {
-						fair += assigned;
-					}
-				}
-			}
-			total = unused;
-//			pr_info("The total is %d")
-		} while (total > 0);
-
-		list_for_each_entry(pos,&psandbox_list,list) {
-			if (pos->average_defer_time == 0 || pos == psandbox ) {
-				continue;
-			} else {
-				slowdown = pos->average_execution_time/(pos->average_execution_time-pos->average_defer_time);
-			}
-			if (slowdown > 10 && fair < current_demand) {
-				penalty_ns = current_demand - fair;
-				schedule_hrtimeout(&penalty_ns,HRTIMER_MODE_REL);
-				break;
-			}
-		}
-		write_unlock(&psandbox_lock);
-
+		psandbox->start_cycles = rdtsc();
 	}
 	return 0;
 }
@@ -480,6 +415,9 @@ SYSCALL_DEFINE2(update_event, BoxEvent __user *, event, int, is_lazy) {
 		pr_info("cannot read boxevent %p\n", event);
 		return -EINVAL;
 	}
+
+
+
 	event_type = boxevent.event_type;
 	key = boxevent.key;
 	if (!current->psandbox || !event) {
@@ -488,7 +426,9 @@ SYSCALL_DEFINE2(update_event, BoxEvent __user *, event, int, is_lazy) {
 	}
 	psandbox = current->psandbox;
 	psandbox->count++;
-
+	if(psandbox->rule.is_retro) {
+		return -EINVAL;
+	}
 	switch (event_type) {
 	case PREPARE: {
 		int is_duplicate = false;
@@ -955,6 +895,21 @@ void do_freeze_psandbox(PSandbox *psandbox){
 		psandbox->finished_activities++;
 	ktime_get_real_ts64(&current_tm);
 	total_time = timespec64_sub(current_tm,psandbox->activity->execution_start);
+	if (psandbox->rule.is_retro) {
+		psandbox->total_spend_time += timespec64_to_ns(&total_time);
+		psandbox->cycles = rdtsc() - psandbox->start_cycles;
+		psandbox->start_cycles = 0;
+		psandbox->optimal_time += (1000000 * psandbox->cycles)/2197446; //TODO: update the library to send the frequency
+		psandbox->cpu_slowdown = psandbox->total_spend_time/psandbox->optimal_time;
+		psandbox->cpu_load = psandbox->total_spend_time;
+		psandbox->lock_slowdown = psandbox->total_spend_time/current->psandbox->lock_waiting_time;
+		psandbox->io_load = psandbox->IO_total_time;
+
+		if (psandbox->cpu_slowdown > psandbox->rule.isolation_level) {
+			pr_info("the slowdown is %lu\n", psandbox->total_spend_time/psandbox->optimal_time);
+		}
+
+	}
 	psandbox->activity->execution_time = timespec64_sub(total_time,psandbox->activity->defer_time);
 	psandbox->total_execution_time += timespec64_to_ns(&psandbox->activity->execution_time);
 
@@ -962,15 +917,6 @@ void do_freeze_psandbox(PSandbox *psandbox){
 	last_unbind_start = psandbox->activity->last_unbind_start;
 
 	//adjust actual execution time
-//	if (psandbox->total_execution_time > psandbox->activity->adjust_ns) {
-//		psandbox->total_execution_time -= psandbox->activity->adjust_ns;
-//		if (psandbox->finished_activities)
-//			psandbox->average_execution_time = psandbox->total_execution_time/psandbox->finished_activities;
-//	} else {
-//		psandbox->total_execution_time = 0;
-//		psandbox->average_execution_time = 0;
-//	}
-
 	defer_tm = timespec64_to_ns(&psandbox->activity->defer_time);
 	psandbox->total_defer_time += defer_tm;
 	if (!(psandbox->unbind_flags & UNBIND_ACT_UNFINISHED)) {

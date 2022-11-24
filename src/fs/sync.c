@@ -121,7 +121,17 @@ void ksys_sync(void)
 
 SYSCALL_DEFINE0(sync)
 {
+	struct timespec64 current_tm,end_tm,total_tm;
+	if(current->psandbox && current->psandbox->rule.is_retro) {
+		ktime_get_real_ts64(&current_tm);
+	}
+
 	ksys_sync();
+	if(current->psandbox && current->psandbox->rule.is_retro) {
+		timespec64_to_ns(&end_tm);
+		total_tm = timespec64_sub(end_tm, current_tm);
+		current->psandbox->IO_total_time += timespec64_to_ns(&total_tm);
+	}
 	return 0;
 }
 

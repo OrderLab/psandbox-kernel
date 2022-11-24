@@ -157,6 +157,22 @@ struct psandbox_info {
 	long int count;
 	long unsigned int competitor;
 	long int unhold;
+
+	//Retro
+	unsigned long long start_cycles;
+	unsigned long long cycles;
+	ktime_t total_spend_time;
+	ktime_t optimal_time;
+	struct timespec64 lock_start;
+	ktime_t lock_waiting_time;
+	ktime_t IO_total_time;
+	unsigned frequency;
+	unsigned cpu_slowdown;
+	unsigned io_slowdown;
+	unsigned io_load;
+	unsigned lock_slowdown;
+	unsigned lock_load;
+	unsigned cpu_load;
 };
 
 extern long int live_psandbox;

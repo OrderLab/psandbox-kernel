@@ -1633,7 +1633,7 @@ futex_wake(u32 __user *uaddr, unsigned int flags, int nr_wake, u32 bitset)
 
 			//PSandbox change: give penalty to the noisy neighbor
 			v_psandbox = this->task->psandbox;
-			if(current->psandbox && this->task && v_psandbox && v_psandbox->is_futex) {
+			if(current->psandbox && this->task && v_psandbox && v_psandbox->is_futex && !current->psandbox->rule.is_retro) {
 
 				if (v_psandbox &&
 				    v_psandbox->state == BOX_ACTIVE && !v_psandbox->is_white) {
@@ -1672,7 +1672,14 @@ futex_wake(u32 __user *uaddr, unsigned int flags, int nr_wake, u32 bitset)
 					}
 
 				}
+			}
 
+			if (current->psandbox->rule.is_retro) {
+				struct timespec64 current_tm,total_tm;
+				ktime_get_real_ts64(&current_tm);
+				timespec64_to_ns(&v_psandbox->lock_start);
+				total_tm = timespec64_sub(current_tm, current->psandbox->lock_start);
+				current->psandbox->lock_waiting_time = timespec64_to_ns(&total_tm);
 			}
 
 			mark_wake_futex(&wake_q, this);
@@ -1687,10 +1694,11 @@ futex_wake(u32 __user *uaddr, unsigned int flags, int nr_wake, u32 bitset)
 out_put_key:
 	put_futex_key(&key);
 out:
-	if (current->psandbox && is_noisy && current->psandbox->state == BOX_ACTIVE && current->psandbox->activity && current->psandbox->is_futex && current->psandbox->activity->c_resource_numbers < 1) {
+	if (current->psandbox && is_noisy && current->psandbox->state == BOX_ACTIVE && current->psandbox->activity && current->psandbox->is_futex && current->psandbox->activity->c_resource_numbers < 1 && !current->psandbox->rule.is_retro) {
 	//	set_current_state(TASK_INTERRUPTIBLE);
 	//	v_psandbox->activity->defer_time.tv_nsec = 0;
 	//	v_psandbox->activity->defer_time.tv_sec = 0;
+
 		if (penalty_ns < 0) {
 			pr_info("1.futex for v_psandbox %d, defer time is smaller than 0\n", v_psandbox->bid);
 		} else if (penalty_ns > 10000000000) {
