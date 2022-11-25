@@ -1674,7 +1674,7 @@ futex_wake(u32 __user *uaddr, unsigned int flags, int nr_wake, u32 bitset)
 				}
 			}
 
-			if (current->psandbox->rule.is_retro) {
+			if (current->psandbox && this->task->psandbox && current->psandbox->rule.is_retro) {
 				struct timespec64 current_tm,total_tm;
 				ktime_get_real_ts64(&current_tm);
 				timespec64_to_ns(&v_psandbox->lock_start);

@@ -42,7 +42,7 @@ DECLARE_HASHTABLE(transfers_map, 10);
 DECLARE_HASHTABLE(stat_map,10);
 
 /* This function will create a psandbox and bind to the current thread */
-SYSCALL_DEFINE3(create_psandbox, int, type, int, isolation_level, int, priority)
+SYSCALL_DEFINE3(create_psandbox, int, type, int, isolation_level, int, priority, int, is_retro)
 {
 	PSandbox *psandbox;
 	unsigned long flags;
@@ -72,7 +72,7 @@ SYSCALL_DEFINE3(create_psandbox, int, type, int, isolation_level, int, priority)
 	psandbox->count = 0;
 	psandbox->rule.type = type;
 	psandbox->rule.isolation_level = isolation_level;
-	psandbox->rule.is_retro = false;
+	psandbox->rule.is_retro = is_retro;
 	psandbox->priority = priority;
 	psandbox->is_nice = 0;
 	psandbox->step = 1;
@@ -902,15 +902,20 @@ void do_freeze_psandbox(PSandbox *psandbox){
 		psandbox->cycles = rdtsc() - psandbox->start_cycles;
 		psandbox->start_cycles = 0;
 		psandbox->optimal_time += (1000000 * psandbox->cycles)/2197446; //TODO: update the library to send the frequency
-		psandbox->cpu_slowdown = psandbox->total_spend_time/psandbox->optimal_time;
+		if(current->psandbox->optimal_time != 0) {
+			psandbox->cpu_slowdown = psandbox->total_spend_time/psandbox->optimal_time;
+		}
 		psandbox->cpu_load = psandbox->total_spend_time;
-		psandbox->lock_slowdown = psandbox->total_spend_time/current->psandbox->lock_waiting_time;
-		psandbox->lock_load = psandbox->IO_total_time;
+		if(current->psandbox->lock_waiting_time != 0) {
+			psandbox->lock_slowdown = psandbox->total_spend_time/current->psandbox->lock_waiting_time;
+			psandbox->lock_load = psandbox->total_spend_time;
+		}
+
 
 
 		if (psandbox->cpu_slowdown > 20  || psandbox->lock_slowdown > 20) {
 			int slowdown_flag = 0;
-			if (psandbox->cpu_slowdown > psandbox->lock_slowdown) {
+			if (psandbox->cpu_slowdown >= psandbox->lock_slowdown) {
 				slowdown_flag = 0;
 			} else {
 				slowdown_flag = 1;
