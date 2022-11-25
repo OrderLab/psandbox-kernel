@@ -1679,7 +1679,8 @@ futex_wake(u32 __user *uaddr, unsigned int flags, int nr_wake, u32 bitset)
 				ktime_get_real_ts64(&current_tm);
 				timespec64_to_ns(&v_psandbox->lock_start);
 				total_tm = timespec64_sub(current_tm, current->psandbox->lock_start);
-				current->psandbox->lock_waiting_time = timespec64_to_ns(&total_tm);
+				this->task->psandbox->lock_waiting_time = timespec64_to_ns(&total_tm);
+				current->psandbox->lock_load = timespec64_to_ns(&total_tm);
 			}
 
 			mark_wake_futex(&wake_q, this);

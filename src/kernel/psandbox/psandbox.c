@@ -148,7 +148,6 @@ SYSCALL_DEFINE0(freeze_psandbox)
 	}
 	do_freeze_psandbox(psandbox);
 
-
 	return 0;
 }
 
@@ -896,6 +895,9 @@ void do_freeze_psandbox(PSandbox *psandbox){
 	ktime_get_real_ts64(&current_tm);
 	total_time = timespec64_sub(current_tm,psandbox->activity->execution_start);
 	if (psandbox->rule.is_retro) {
+		DemandNode demand[100];
+		PSandbox *pos = NULL;
+		int slowdown, current_demand, i = 0, unsatisfied,fair=0, capacity = 0, total = 0;
 		psandbox->total_spend_time += timespec64_to_ns(&total_time);
 		psandbox->cycles = rdtsc() - psandbox->start_cycles;
 		psandbox->start_cycles = 0;
@@ -903,12 +905,75 @@ void do_freeze_psandbox(PSandbox *psandbox){
 		psandbox->cpu_slowdown = psandbox->total_spend_time/psandbox->optimal_time;
 		psandbox->cpu_load = psandbox->total_spend_time;
 		psandbox->lock_slowdown = psandbox->total_spend_time/current->psandbox->lock_waiting_time;
-		psandbox->io_load = psandbox->IO_total_time;
+		psandbox->lock_load = psandbox->IO_total_time;
 
-		if (psandbox->cpu_slowdown > psandbox->rule.isolation_level) {
-			pr_info("the slowdown is %lu\n", psandbox->total_spend_time/psandbox->optimal_time);
+
+		if (psandbox->cpu_slowdown > 20  || psandbox->lock_slowdown > 20) {
+			int slowdown_flag = 0;
+			if (psandbox->cpu_slowdown > psandbox->lock_slowdown) {
+				slowdown_flag = 0;
+			} else {
+				slowdown_flag = 1;
+			}
+
+			write_lock(&psandbox_lock);
+			list_for_each_entry(pos,&psandbox_list,list) {
+				if (slowdown_flag == 0) {
+					demand[i].demand = pos->cpu_load;
+					demand[i].psandbox = pos;
+					demand[i].is_satisfied = 0;
+					capacity += pos->cpu_load;
+				} else if (slowdown_flag == 1) {
+					demand[i].demand = pos->lock_load;
+					demand[i].psandbox = pos;
+					demand[i].is_satisfied = 0;
+					capacity += pos->lock_load;
+				}
+				i++;
+
+			}
+			write_unlock(&psandbox_lock);
+
+			//Max-min fairness
+			total = capacity;
+			unsatisfied = i;
+			do {
+				int assigned, unused = 0,j;
+				if ( unsatisfied == 0) {
+					//				pr_info("there is no live_psandbox\n");
+					break;
+				} else {
+					assigned = total/unsatisfied;
+				}
+
+				for (j=0; j < i; j++) {
+					if (demand[j].is_satisfied) {
+						continue;
+					}
+
+					if (assigned > demand[j].demand) {
+						unused = assigned - demand[j].demand;
+						unsatisfied--;
+						demand[j].is_satisfied = true;
+						if (demand[j].psandbox == psandbox) {
+							fair += demand[j].demand;
+						}
+					} else {
+						if (demand[j].psandbox == psandbox) {
+							fair += assigned;
+						}
+					}
+				}
+				total = unused;
+				//			pr_info("The total is %d")
+			} while (total > 0);
+			int j;
+			for (j=0; j < i; j++) {
+				if (fair < demand[j].demand) {
+					pr_info("the psandbox %s is bad\n", demand->psandbox->bid);
+				}
+			}
 		}
-
 	}
 	psandbox->activity->execution_time = timespec64_sub(total_time,psandbox->activity->defer_time);
 	psandbox->total_execution_time += timespec64_to_ns(&psandbox->activity->execution_time);

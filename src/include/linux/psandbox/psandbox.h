@@ -168,11 +168,9 @@ struct psandbox_info {
 	ktime_t IO_total_time;
 	unsigned frequency;
 	unsigned cpu_slowdown;
-	unsigned io_slowdown;
-	unsigned io_load;
+	unsigned cpu_load;
 	unsigned lock_slowdown;
 	unsigned lock_load;
-	unsigned cpu_load;
 };
 
 extern long int live_psandbox;
