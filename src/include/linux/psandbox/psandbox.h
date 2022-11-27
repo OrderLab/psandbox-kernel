@@ -166,6 +166,7 @@ struct psandbox_info {
 	struct timespec64 lock_start;
 	ktime_t lock_waiting_time;
 	ktime_t IO_total_time;
+	int is_throttle;
 	unsigned frequency;
 	unsigned cpu_slowdown;
 	unsigned cpu_load;

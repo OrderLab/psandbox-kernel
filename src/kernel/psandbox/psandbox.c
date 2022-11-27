@@ -42,7 +42,7 @@ DECLARE_HASHTABLE(transfers_map, 10);
 DECLARE_HASHTABLE(stat_map,10);
 
 /* This function will create a psandbox and bind to the current thread */
-SYSCALL_DEFINE3(create_psandbox, int, type, int, isolation_level, int, priority, int, is_retro)
+SYSCALL_DEFINE4(create_psandbox, int, type, int, isolation_level, int, priority, int, is_retro)
 {
 	PSandbox *psandbox;
 	unsigned long flags;
@@ -975,7 +975,11 @@ void do_freeze_psandbox(PSandbox *psandbox){
 			int j;
 			for (j=0; j < i; j++) {
 				if (fair < demand[j].demand) {
+					ktime_t penalty_ns;
 					pr_info("the psandbox %s is bad\n", demand->psandbox->bid);
+					demand->psandbox->is_throttle = 1;
+					penalty_ns = psandbox->average_execution_time;
+					schedule_hrtimeout(&penalty_ns,HRTIMER_MODE_REL);
 				}
 			}
 		}
@@ -1008,6 +1012,10 @@ void do_freeze_psandbox(PSandbox *psandbox){
 			if(victim)
 				do_penalty(victim,psandbox->activity->penalty_ns,psandbox->activity->key,false);
 		}
+	}
+
+	if (psandbox->is_throttle) {
+
 	}
 
 	memset(psandbox->activity, 0, sizeof(Activity));
