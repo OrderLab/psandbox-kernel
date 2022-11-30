@@ -898,16 +898,21 @@ void do_freeze_psandbox(PSandbox *psandbox){
 		DemandNode demand[100];
 		PSandbox *pos = NULL;
 		int slowdown, current_demand, i = 0, unsatisfied,fair=0, capacity = 0, total = 0;
+		if (psandbox->is_throttle) {
+			ktime_t penalty_ns = psandbox->average_execution_time;
+			schedule_hrtimeout(&penalty_ns,HRTIMER_MODE_REL);
+			psandbox->is_throttle = 0;
+		}
 		psandbox->total_spend_time += timespec64_to_ns(&total_time);
 		psandbox->cycles = rdtsc() - psandbox->start_cycles;
 		psandbox->start_cycles = 0;
 		psandbox->optimal_time += (1000000 * psandbox->cycles)/2197446; //TODO: update the library to send the frequency
-		if(current->psandbox->optimal_time != 0) {
+		if(psandbox->optimal_time != 0) {
 			psandbox->cpu_slowdown = psandbox->total_spend_time/psandbox->optimal_time;
 		}
 		psandbox->cpu_load = psandbox->total_spend_time;
-		if(current->psandbox->lock_waiting_time != 0) {
-			psandbox->lock_slowdown = psandbox->total_spend_time/current->psandbox->lock_waiting_time;
+		if(psandbox->lock_waiting_time != 0) {
+			psandbox->lock_slowdown = psandbox->total_spend_time/psandbox->lock_waiting_time;
 			psandbox->lock_load = psandbox->total_spend_time;
 		}
 
@@ -975,11 +980,8 @@ void do_freeze_psandbox(PSandbox *psandbox){
 			int j;
 			for (j=0; j < i; j++) {
 				if (fair < demand[j].demand) {
-					ktime_t penalty_ns;
 					pr_info("the psandbox %s is bad\n", demand->psandbox->bid);
 					demand->psandbox->is_throttle = 1;
-					penalty_ns = psandbox->average_execution_time;
-					schedule_hrtimeout(&penalty_ns,HRTIMER_MODE_REL);
 				}
 			}
 		}
