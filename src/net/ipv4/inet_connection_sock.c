@@ -485,6 +485,9 @@ static inline struct request_sock *reqsk_queue_dequeue_predict(
 		if (!(psandbox->unbind_flags & UNBIND_HANDLE_ACCEPT))
 			break;
 
+		if(psandbox->rule.is_retro)
+			break;
+
 		count++;
 
 		ktime_get_real_ts64(&current_tm);
@@ -1278,7 +1281,7 @@ struct sock *do_inet_csk_reqsk_queue_add(struct sock *sk,
 		size_t addr = child->sk_daddr;
 		PSandbox *psandbox = NULL;
 		psandbox = get_unbind_psandbox(addr);
-		if (psandbox) {
+		if (psandbox && !psandbox->rule.is_retro) {
 			ktime_get_real_ts64(&psandbox->activity->last_queue_in);
 			if (psandbox->unbind_flags & UNBIND_HANDLE_ACCEPT) {
 				// prepare before entering the kernel queue
