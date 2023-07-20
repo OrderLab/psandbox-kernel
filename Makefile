@@ -5,7 +5,7 @@ QEMU_MEMORY=4G
 
 # Where to store final images
 OUTDIR ?= $(shell pwd)/images
-QEMU_KERNEL ?= $(shell pwd)/build/arch/x86/boot/bzImage
+QEMU_KERNEL ?= $(shell pwd)/src/arch/x86/boot/bzImage
 SRC ?= $(dir $(abspath $(lastword $(MAKEFILE_LIST))))/guest-images
 
 
