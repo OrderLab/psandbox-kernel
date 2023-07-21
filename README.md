@@ -1,5 +1,11 @@
 # PerfSandbox Kernel
 
+## Dependencies
+
+```bash
+sudo apt install qemu-system build-essential libncurses-dev bison flex libssl-dev libelf-dev debootstrap libguestfs-tools
+```
+
 ## Build
 
 ```bash
