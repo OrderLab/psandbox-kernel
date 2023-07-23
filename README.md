@@ -10,7 +10,6 @@ sudo apt install qemu-system build-essential libncurses-dev bison flex libssl-de
 
 ```bash
 make
-make image
 ```
 
 ## TEST
