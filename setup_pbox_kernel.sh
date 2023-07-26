@@ -1,7 +1,8 @@
 #!/bin/bash
 
 sudo apt-get update
-sudo apt-get install -y libelf-dev
+sudo apt-get install -y libelf-dev python3-pip cmake
+pip3 install pandas matplotlib
 cp .config src/
 cd src && make kvm_guest.config
 cd src && make -j 20 bindeb-pkg LOCALVERSION=-my-k
